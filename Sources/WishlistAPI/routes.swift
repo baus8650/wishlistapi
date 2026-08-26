@@ -15,6 +15,29 @@ func routes(_ app: Application) throws {
         HTTPStatus.ok
     }
 
+    app.get(".well-known", "apple-app-site-association") { req async -> Response in
+        let body = #"{"applinks":{"details":[{"appIDs":["89JNN3239D.com.bausch.wishlist-ios"],"components":[{"/":"/share/*","comment":"Hushful wishlist share links"}]}]}}"#
+        return Response(status: .ok, headers: ["Content-Type": "application/json"], body: .init(string: body))
+    }
+
+    app.get("share", ":shareToken") { req async -> Response in
+        Response(
+            status: .ok,
+            headers: ["Content-Type": "text/html; charset=utf-8"],
+            body: .init(string: """
+                <!doctype html>
+                <html lang="en">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>Open in Hushful</title>
+                <body style="font-family: -apple-system, sans-serif; margin: 3rem auto; max-width: 32rem; padding: 1rem; text-align: center;">
+                    <h1>Hushful</h1>
+                    <p>Install or open Hushful on your iPhone to view this shared wishlist.</p>
+                </body>
+                </html>
+                """)
+        )
+    }
+
     app.get("hello") { req async -> String in
         "Hello, world!"
     }
