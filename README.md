@@ -52,6 +52,10 @@ Docker Compose supplies local defaults. Set secure values in production:
 | `PORT` | `8080`; hosting platforms can assign this dynamically |
 | `AUTO_MIGRATE` | `false`; set to `true` for the Railway beta deployment |
 
+Railway-style `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`
+variables are also supported as alternatives to the corresponding
+`DATABASE_*` variables.
+
 Never deploy with the default JWT secret or database password.
 
 ## Railway beta deployment

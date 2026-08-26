@@ -12,11 +12,25 @@ public func configure(_ app: Application) async throws {
         // the selected PostgreSQL service.
         app.databases.use(try .postgres(url: databaseURL), as: .psql)
     } else {
-        let hostname = Environment.get("DATABASE_HOST") ?? "localhost"
-        let port = Environment.get("DATABASE_PORT").flatMap(Int.init) ?? SQLPostgresConfiguration.ianaPortNumber
-        let username = Environment.get("DATABASE_USERNAME") ?? "wishlist"
-        let password = Environment.get("DATABASE_PASSWORD") ?? "wishlist"
-        let database = Environment.get("DATABASE_NAME") ?? "wishlist_dev"
+        let hostname = Environment.get("DATABASE_HOST")
+            ?? Environment.get("PGHOST")
+            ?? "localhost"
+        let port = (Environment.get("DATABASE_PORT") ?? Environment.get("PGPORT"))
+            .flatMap(Int.init) ?? SQLPostgresConfiguration.ianaPortNumber
+        let username = Environment.get("DATABASE_USERNAME")
+            ?? Environment.get("PGUSER")
+            ?? "wishlist"
+        let password = Environment.get("DATABASE_PASSWORD")
+            ?? Environment.get("PGPASSWORD")
+            ?? "wishlist"
+        let database = Environment.get("DATABASE_NAME")
+            ?? Environment.get("PGDATABASE")
+            ?? "wishlist_dev"
+
+        if app.environment == .production && hostname == "localhost" {
+            app.logger.critical("DATABASE_URL, DATABASE_HOST, or PGHOST must be set in production.")
+            throw Abort(.internalServerError, reason: "Server database is not configured.")
+        }
 
         let configuration = SQLPostgresConfiguration(
             hostname: hostname,
