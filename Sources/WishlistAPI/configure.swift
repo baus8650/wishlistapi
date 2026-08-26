@@ -8,9 +8,16 @@ public func configure(_ app: Application) async throws {
     // MARK: Database
 
     if let databaseURL = Environment.get("DATABASE_URL"), !databaseURL.isEmpty {
-        // Railway supplies DATABASE_URL, including any TLS options required by
-        // the selected PostgreSQL service.
-        app.databases.use(try .postgres(url: databaseURL), as: .psql)
+        var configuration = try SQLPostgresConfiguration(url: databaseURL)
+
+        // Railway's private network uses an internal hostname whose certificate
+        // is not trusted by the container. Keep verified TLS for every external
+        // database URL, but use Railway's isolated network transport internally.
+        if URLComponents(string: databaseURL)?.host?.hasSuffix(".railway.internal") == true {
+            configuration.coreConfiguration.tls = .disable
+        }
+
+        app.databases.use(.postgres(configuration: configuration), as: .psql)
     } else {
         let hostname = Environment.get("DATABASE_HOST")
             ?? Environment.get("PGHOST")
