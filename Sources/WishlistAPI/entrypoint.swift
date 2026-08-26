@@ -11,6 +11,11 @@ enum Entrypoint {
         
         let app = try await Application.make(env)
 
+        // Platforms such as Railway assign the public web port at runtime.
+        if let port = Environment.get("PORT").flatMap(Int.init) {
+            app.http.server.configuration.port = port
+        }
+
         // This attempts to install NIO as the Swift Concurrency global executor.
         // You can enable it if you'd like to reduce the amount of context switching between NIO and Swift Concurrency.
         // Note: this has caused issues with some libraries that use `.wait()` and cleanly shutting down.
@@ -20,6 +25,9 @@ enum Entrypoint {
         
         do {
             try await configure(app)
+            if Environment.get("AUTO_MIGRATE")?.lowercased() == "true" {
+                try await app.autoMigrate()
+            }
             try await app.execute()
         } catch {
             app.logger.report(error: error)
