@@ -30,8 +30,45 @@ struct WishlistItemController: RouteCollection {
         routes.post(":wishlistID", "items", use: createForWishlist)
 
         // Item-level endpoints under /wishlists
+        routes.put(":wishlistID", "items", ":itemID", use: replace)
         routes.patch(":wishlistID", "items", ":itemID", use: update)
         routes.delete(":wishlistID", "items", ":itemID", use: delete)
+    }
+
+    // PUT /wishlists/:wishlistID/items/:itemID
+    // Replaces all owner-editable fields, allowing optional values to be cleared.
+    func replace(req: Request) async throws -> WishlistItem {
+        let user = try req.auth.require(User.self)
+        let userId = try user.requireID()
+
+        guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
+              let itemID = req.parameters.get("itemID", as: UUID.self) else {
+            throw Abort(.badRequest, reason: "Invalid wishlist or item ID.")
+        }
+
+        guard let item = try await WishlistItem.find(itemID, on: req.db),
+              item.$wishlist.id == wishlistID else {
+            throw Abort(.notFound)
+        }
+
+        let wishlist = try await item.$wishlist.get(on: req.db)
+        guard wishlist.$owner.id == userId else { throw Abort(.notFound) }
+
+        let body = try req.content.decode(CreateRequest.self)
+        let title = body.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            throw Abort(.badRequest, reason: "Title is required.")
+        }
+        if let price = body.price, price < 0 {
+            throw Abort(.badRequest, reason: "price cannot be negative.")
+        }
+
+        item.title = title
+        item.url = body.url?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        item.price = body.price
+        item.ownerNote = body.ownerNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        try await item.save(on: req.db)
+        return item
     }
 
     // GET /wishlists/:wishlistID/items
@@ -160,4 +197,8 @@ struct WishlistItemController: RouteCollection {
         try await item.delete(on: req.db)
         return .noContent
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

@@ -5,6 +5,22 @@ import Vapor
 
 public func configure(_ app: Application) async throws {
 
+    // Browser clients authenticate with bearer/viewer tokens rather than cookies,
+    // so the API can safely accept requests from the Hushful web app's origin.
+    let corsConfiguration = CORSMiddleware.Configuration(
+        allowedOrigin: .all,
+        allowedMethods: [.GET, .POST, .PUT, .PATCH, .DELETE, .OPTIONS],
+        allowedHeaders: [
+            .accept,
+            .authorization,
+            .contentType,
+            .origin,
+            .xRequestedWith,
+            HTTPHeaders.Name("X-Viewer-Token")
+        ]
+    )
+    app.middleware.use(CORSMiddleware(configuration: corsConfiguration), at: .beginning)
+
     // MARK: Database
 
     if let databaseURL = Environment.get("DATABASE_URL"), !databaseURL.isEmpty {
