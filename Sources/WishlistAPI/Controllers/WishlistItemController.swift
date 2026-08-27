@@ -15,6 +15,7 @@ struct WishlistItemController: RouteCollection {
         let url: String?
         let price: Double?
         let ownerNote: String?
+        let quantity: Int?
     }
 
     struct UpdateRequest: Content {
@@ -22,6 +23,7 @@ struct WishlistItemController: RouteCollection {
         let url: String?
         let price: Double?
         let ownerNote: String?
+        let quantity: Int?
     }
 
     func boot(routes: any RoutesBuilder) throws {
@@ -62,11 +64,13 @@ struct WishlistItemController: RouteCollection {
         if let price = body.price, price < 0 {
             throw Abort(.badRequest, reason: "price cannot be negative.")
         }
+        guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
 
         item.title = title
         item.url = body.url?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         item.price = body.price
         item.ownerNote = body.ownerNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        item.quantity = body.quantity ?? 1
         try await item.save(on: req.db)
         return item
     }
@@ -117,13 +121,15 @@ struct WishlistItemController: RouteCollection {
         if let price = body.price, price < 0 {
             throw Abort(.badRequest, reason: "price cannot be negative.")
         }
+        guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
 
         let item = WishlistItem(
             wishlistId: wishlistID,
             title: title,
             url: body.url,
             price: body.price,
-            ownerNote: body.ownerNote
+            ownerNote: body.ownerNote,
+            quantity: body.quantity ?? 1
         )
         try await item.save(on: req.db)
         return item
@@ -166,6 +172,10 @@ struct WishlistItemController: RouteCollection {
             item.price = price
         }
         if let note = body.ownerNote { item.ownerNote = note }
+        if let quantity = body.quantity {
+            guard quantity > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
+            item.quantity = quantity
+        }
 
         try await item.save(on: req.db)
         return item

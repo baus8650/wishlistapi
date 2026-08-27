@@ -65,6 +65,7 @@ struct RecipientShareController: RouteCollection {
         let note: String?
         let displayName: String?
         let shareName: Bool?
+        let purchasedQuantity: Int?
     }
 
     struct RecipientNote: Content {
@@ -77,6 +78,8 @@ struct RecipientShareController: RouteCollection {
         let item: WishlistItem
         let purchased: Bool          // purchased by anyone
         let purchasedByMe: Bool      // purchased by this viewer
+        let purchasedQuantity: Int   // total quantity claimed by all viewers
+        let purchasedQuantityByMe: Int
         let notes: [RecipientNote]   // notes from all recipients
     }
 
@@ -195,14 +198,16 @@ struct RecipientShareController: RouteCollection {
 
         return items.map { item in
             guard let id = item.id else {
-                return ItemWithRecipientInfo(item: item, purchased: false, purchasedByMe: false, notes: [])
+                return ItemWithRecipientInfo(item: item, purchased: false, purchasedByMe: false, purchasedQuantity: 0, purchasedQuantityByMe: 0, notes: [])
             }
 
             let itemStates = statesByItem[id] ?? []
 
-            let purchasedByAnyone = itemStates.contains(where: { $0.purchased })
+            let purchasedQuantity = itemStates.reduce(0) { $0 + $1.purchasedQuantity }
+            let purchasedByAnyone = purchasedQuantity > 0
             let myState = itemStates.first(where: { $0.$viewer.id == viewerId })
-            let purchasedByMe = myState?.purchased ?? false
+            let purchasedQuantityByMe = myState?.purchasedQuantity ?? 0
+            let purchasedByMe = purchasedQuantityByMe > 0
 
             // Notes from all recipients (if enabled). Only show author's display name if:
             // - wishlist allows purchaser names AND
@@ -239,6 +244,8 @@ struct RecipientShareController: RouteCollection {
                 item: item,
                 purchased: purchasedByAnyone,
                 purchasedByMe: purchasedByMe,
+                purchasedQuantity: purchasedQuantity,
+                purchasedQuantityByMe: purchasedQuantityByMe,
                 notes: notes
             )
         }
@@ -277,8 +284,30 @@ struct RecipientShareController: RouteCollection {
             .first()
         else { throw Abort(.notFound) }
 
+        let state = try await ItemViewerState.query(on: req.db)
+            .filter(\.$item.$id == itemID)
+            .filter(\.$viewer.$id == viewerId)
+            .first()
+
+        let desiredQuantity: Int? = body.purchasedQuantity ?? body.purchased.map {
+            $0 ? max(state?.purchasedQuantity ?? 0, 1) : 0
+        }
+        if let desiredQuantity {
+            guard desiredQuantity >= 0 && desiredQuantity <= item.quantity else {
+                throw Abort(.badRequest, reason: "Purchased quantity must be between 0 and \(item.quantity).")
+            }
+            let otherStates = try await ItemViewerState.query(on: req.db)
+                .filter(\.$item.$id == itemID)
+                .filter(\.$viewer.$id != viewerId)
+                .all()
+            let claimedByOthers = otherStates.reduce(0) { $0 + $1.purchasedQuantity }
+            guard claimedByOthers + desiredQuantity <= item.quantity else {
+                throw Abort(.conflict, reason: "Only \(max(0, item.quantity - claimedByOthers)) remain available.")
+            }
+        }
+
         // If turning purchased ON and viewer has no name, require displayName
-        let turningPurchasedOn = (body.purchased == true)
+        let turningPurchasedOn = (desiredQuantity ?? 0) > 0
         // Enforce wishlist settings: prevent multiple purchasers when configured.
         if turningPurchasedOn && (wishlist.autoLockOnPurchase || !wishlist.allowMultiplePurchases) {
             // If SOMEONE ELSE already has purchased=true for this item, reject.
@@ -302,22 +331,19 @@ struct RecipientShareController: RouteCollection {
         }
 
 
-        let state = try await ItemViewerState.query(on: req.db)
-            .filter(\.$item.$id == itemID)
-            .filter(\.$viewer.$id == viewerId)
-            .first()
-
         if let state {
-            if let purchased = body.purchased { state.purchased = purchased }
+            if let desiredQuantity {
+                state.purchasedQuantity = desiredQuantity
+                state.purchased = desiredQuantity > 0
+            }
             if wishlist.allowNotes, let note = body.note { state.note = note }
             if let shareName = body.shareName { state.shareName = shareName }
             try await state.save(on: req.db)
 
             // purchased by anyone (not just this viewer)
-            let purchasedByAnyone = (try await ItemViewerState.query(on: req.db)
-                .filter(\.$item.$id == itemID)
-                .filter(\.$purchased == true)
-                .first()) != nil
+            let allStates = try await ItemViewerState.query(on: req.db).filter(\.$item.$id == itemID).all()
+            let purchasedQuantity = allStates.reduce(0) { $0 + $1.purchasedQuantity }
+            let purchasedByAnyone = purchasedQuantity > 0
 
             let purchasedByMe = state.purchased
             let notes: [RecipientNote] = {
@@ -328,11 +354,12 @@ struct RecipientShareController: RouteCollection {
                 return [RecipientNote(note: raw, authorDisplayName: author, updatedAt: state.updatedAt)]
             }()
 
-            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchasedByMe, notes: notes)
+            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchasedByMe, purchasedQuantity: purchasedQuantity, purchasedQuantityByMe: state.purchasedQuantity, notes: notes)
         } else {
-            let purchased = body.purchased ?? false
+            let purchasedQuantity = desiredQuantity ?? 0
+            let purchased = purchasedQuantity > 0
             let shareName = body.shareName ?? false
-            let newState = ItemViewerState(itemId: itemID, viewerId: viewerId, purchased: purchased, note: wishlist.allowNotes ? body.note : nil, shareName: shareName)
+            let newState = ItemViewerState(itemId: itemID, viewerId: viewerId, purchased: purchased, purchasedQuantity: purchasedQuantity, note: wishlist.allowNotes ? body.note : nil, shareName: shareName)
             try await newState.save(on: req.db)
 
             let notes: [RecipientNote] = {
@@ -343,12 +370,11 @@ struct RecipientShareController: RouteCollection {
                 return [RecipientNote(note: raw, authorDisplayName: author, updatedAt: newState.updatedAt)]
             }()
 
-            let purchasedByAnyone = (try await ItemViewerState.query(on: req.db)
-                .filter(\.$item.$id == itemID)
-                .filter(\.$purchased == true)
-                .first()) != nil
+            let allStates = try await ItemViewerState.query(on: req.db).filter(\.$item.$id == itemID).all()
+            let totalPurchasedQuantity = allStates.reduce(0) { $0 + $1.purchasedQuantity }
+            let purchasedByAnyone = totalPurchasedQuantity > 0
 
-            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchased, notes: notes)
+            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchased, purchasedQuantity: totalPurchasedQuantity, purchasedQuantityByMe: purchasedQuantity, notes: notes)
         }
     }
 

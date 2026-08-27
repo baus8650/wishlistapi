@@ -22,6 +22,9 @@ final class ItemViewerState: Model, Content {
 
     @Field(key: "purchased")
     var purchased: Bool
+
+    @Field(key: "purchased_quantity")
+    var purchasedQuantity: Int
     
     @Field(key: "share_name")
     var shareName: Bool
@@ -37,11 +40,12 @@ final class ItemViewerState: Model, Content {
 
     init() {}
 
-    init(id: UUID? = nil, itemId: UUID, viewerId: UUID, purchased: Bool, note: String? = nil, shareName: Bool = false) {
+    init(id: UUID? = nil, itemId: UUID, viewerId: UUID, purchased: Bool, purchasedQuantity: Int = 0, note: String? = nil, shareName: Bool = false) {
         self.id = id
         self.$item.id = itemId
         self.$viewer.id = viewerId
         self.purchased = purchased
+        self.purchasedQuantity = purchasedQuantity
         self.note = note
         self.shareName = shareName
     }

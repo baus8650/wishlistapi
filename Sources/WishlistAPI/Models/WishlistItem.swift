@@ -30,6 +30,9 @@ final class WishlistItem: Model, Content {
     @OptionalField(key: "owner_note")
     var ownerNote: String?
 
+    @Field(key: "quantity")
+    var quantity: Int
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 
@@ -44,7 +47,8 @@ final class WishlistItem: Model, Content {
         title: String,
         url: String? = nil,
         price: Double? = nil,
-        ownerNote: String? = nil
+        ownerNote: String? = nil,
+        quantity: Int = 1
     ) {
         self.id = id
         self.$wishlist.id = wishlistId
@@ -52,6 +56,7 @@ final class WishlistItem: Model, Content {
         self.url = url
         self.price = price
         self.ownerNote = ownerNote
+        self.quantity = quantity
     }
 }
 

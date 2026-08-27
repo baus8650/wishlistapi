@@ -85,6 +85,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateWishlistShareLink())
     app.migrations.add(CreateWishlistViewer())
     app.migrations.add(CreateItemViewerState())
+    app.migrations.add(AddItemQuantities())
 
     // MARK: Routes
     try routes(app)

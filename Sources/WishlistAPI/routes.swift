@@ -16,7 +16,7 @@ func routes(_ app: Application) throws {
     }
 
     app.get(".well-known", "apple-app-site-association") { req async -> Response in
-        let body = #"{"applinks":{"details":[{"appIDs":["89JNN3239D.com.bausch.wishlist-ios"],"components":[{"/":"/share/*","comment":"Hushful wishlist share links"}]}]}}"#
+        let body = #"{"applinks":{"details":[{"appIDs":["89JNN3239D.com.bausch.hushful"],"components":[{"/":"/share/*","comment":"Hushful wishlist share links"}]}]}}"#
         return Response(status: .ok, headers: ["Content-Type": "application/json"], body: .init(string: body))
     }
 
