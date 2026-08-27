@@ -354,6 +354,18 @@ struct RecipientShareController: RouteCollection {
 
     // MARK: Helpers
     private func resolveWishlistAndViewer(req: Request) async throws -> (Wishlist, WishlistViewer) {
+        if let accountShareID = req.parameters.get("accountShareID", as: UUID.self),
+           let user = req.auth.get(User.self) {
+            let userID = try user.requireID()
+            guard let viewer = try await WishlistViewer.query(on: req.db)
+                .filter(\.$id == accountShareID)
+                .filter(\.$user.$id == userID)
+                .first() else {
+                throw Abort(.notFound)
+            }
+            return (try await viewer.$wishlist.get(on: req.db), viewer)
+        }
+
         guard let shareToken = req.parameters.get("shareToken") else {
             throw Abort(.badRequest, reason: "Missing share token.")
         }

@@ -77,6 +77,9 @@ func routes(_ app: Application) throws {
         return user.toPublic()
     }
 
+    // Shared wishlists saved to the signed-in account.
+    try protected.grouped("shared-wishlists").register(collection: AccountShareController())
+
     // Mount wishlists at /wishlists
     let wishlists = protected.grouped("wishlists")
     try wishlists.register(collection: WishlistController())
