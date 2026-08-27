@@ -72,6 +72,7 @@ struct RecipientShareController: RouteCollection {
         let note: String
         let authorDisplayName: String?
         let updatedAt: Date?
+        let isMine: Bool
     }
 
     struct ItemWithRecipientInfo: Content {
@@ -219,13 +220,13 @@ struct RecipientShareController: RouteCollection {
                     guard !raw.isEmpty else { return nil }
 
                     let authorName: String?
-                    if wishlist.showPurchaserNames && s.shareName {
+                    if s.shareName {
                         authorName = displayNameByViewerId[s.$viewer.id]
                     } else {
                         authorName = nil
                     }
 
-                    return RecipientNote(note: raw, authorDisplayName: authorName, updatedAt: s.updatedAt)
+                    return RecipientNote(note: raw, authorDisplayName: authorName, updatedAt: s.updatedAt, isMine: s.$viewer.id == viewerId)
                 }
                 .sorted { (a, b) in
                     // newest first if timestamps exist
@@ -264,13 +265,16 @@ struct RecipientShareController: RouteCollection {
         }
 
         let wantsShareName = (body.shareName == true)
-        if wantsShareName && (viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
-            let name = (body.displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else {
+        if wantsShareName {
+            let submittedName = body.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let savedName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard submittedName?.isEmpty == false || savedName?.isEmpty == false else {
                 throw Abort(.badRequest, reason: "displayName is required to share your name.")
             }
-            viewer.displayName = name
-            try await viewer.save(on: req.db)
+            if let submittedName, !submittedName.isEmpty, submittedName != savedName {
+                viewer.displayName = submittedName
+                try await viewer.save(on: req.db)
+            }
         }
 
         guard let itemID = req.parameters.get("itemID", as: UUID.self) else {
@@ -350,8 +354,8 @@ struct RecipientShareController: RouteCollection {
                 guard wishlist.allowNotes else { return [] }
                 let raw = (state.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !raw.isEmpty else { return [] }
-                let author = (wishlist.showPurchaserNames && state.shareName) ? viewer.displayName : nil
-                return [RecipientNote(note: raw, authorDisplayName: author, updatedAt: state.updatedAt)]
+                let author = state.shareName ? viewer.displayName : nil
+                return [RecipientNote(note: raw, authorDisplayName: author, updatedAt: state.updatedAt, isMine: true)]
             }()
 
             return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchasedByMe, purchasedQuantity: purchasedQuantity, purchasedQuantityByMe: state.purchasedQuantity, notes: notes)
@@ -366,8 +370,8 @@ struct RecipientShareController: RouteCollection {
                 guard wishlist.allowNotes else { return [] }
                 let raw = (newState.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !raw.isEmpty else { return [] }
-                let author = (wishlist.showPurchaserNames && newState.shareName) ? viewer.displayName : nil
-                return [RecipientNote(note: raw, authorDisplayName: author, updatedAt: newState.updatedAt)]
+                let author = newState.shareName ? viewer.displayName : nil
+                return [RecipientNote(note: raw, authorDisplayName: author, updatedAt: newState.updatedAt, isMine: true)]
             }()
 
             let allStates = try await ItemViewerState.query(on: req.db).filter(\.$item.$id == itemID).all()
