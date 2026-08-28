@@ -29,6 +29,19 @@ struct ResetPasswordRequest: Content {
     let password: String
 }
 
+struct GoogleLoginRequest: Content {
+    let idToken: String
+}
+
+private struct GoogleTokenInfo: Content {
+    let iss: String?
+    let aud: String
+    let sub: String
+    let email: String
+    let email_verified: String?
+    let name: String?
+}
+
 struct PasswordResetMessage: Content {
     let message: String
 }
@@ -55,6 +68,7 @@ struct AuthController: RouteCollection {
         auth.post("login", use: login)
         auth.post("forgot-password", use: forgotPassword)
         auth.post("reset-password", use: resetPassword)
+        auth.post("google", use: googleLogin)
     }
 
     func register(req: Request) async throws -> TokenResponse {
@@ -190,6 +204,82 @@ struct AuthController: RouteCollection {
         return PasswordResetMessage(message: "Your password has been updated. You can now sign in.")
     }
 
+    func googleLogin(req: Request) async throws -> TokenResponse {
+        let body = try req.content.decode(GoogleLoginRequest.self)
+        guard !body.idToken.isEmpty else {
+            throw Abort(.badRequest, reason: "Missing Google identity token.")
+        }
+
+        let tokenInfoResponse = try await req.client.get(
+            URI(string: "https://oauth2.googleapis.com/tokeninfo?id_token=\(body.idToken.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")
+        )
+        guard tokenInfoResponse.status == .ok else {
+            throw Abort(.unauthorized, reason: "Google sign-in could not be verified.")
+        }
+        let profile = try tokenInfoResponse.content.decode(GoogleTokenInfo.self)
+        let allowedAudiences = [
+            Environment.get("GOOGLE_WEB_CLIENT_ID"),
+            Environment.get("GOOGLE_IOS_CLIENT_ID")
+        ].compactMap { $0?.isEmpty == false ? $0 : nil }
+        guard !allowedAudiences.isEmpty else {
+            throw Abort(.internalServerError, reason: "Google sign-in is not configured.")
+        }
+        guard allowedAudiences.contains(profile.aud),
+              profile.email_verified == "true",
+              profile.iss == "accounts.google.com" || profile.iss == "https://accounts.google.com"
+        else {
+            throw Abort(.unauthorized, reason: "Google sign-in could not be verified.")
+        }
+
+        let email = profile.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let user: User
+        if let identity = try await AuthIdentity.query(on: req.db)
+            .filter(\.$provider == "google")
+            .filter(\.$providerSubject == profile.sub)
+            .with(\.$user)
+            .first() {
+            user = identity.user
+        } else {
+            if let existingUser = try await User.query(on: req.db)
+                .filter(\.$email == email)
+                .first() {
+                user = existingUser
+            } else {
+                var generator = SystemRandomNumberGenerator()
+                let randomPassword = (0..<32).map { _ in
+                    String(format: "%02x", UInt8.random(in: .min ... .max, using: &generator))
+                }.joined()
+                user = User(
+                    email: email,
+                    passwordHash: try Bcrypt.hash(randomPassword),
+                    displayName: profile.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                try await user.save(on: req.db)
+            }
+
+            let userID = try user.requireID()
+            let identity = AuthIdentity(
+                userID: userID,
+                provider: "google",
+                providerSubject: profile.sub
+            )
+            do {
+                try await identity.save(on: req.db)
+            } catch {
+                // A concurrent login may have linked the same identity first.
+                guard let linked = try await AuthIdentity.query(on: req.db)
+                    .filter(\.$provider == "google")
+                    .filter(\.$providerSubject == profile.sub)
+                    .with(\.$user)
+                    .first()
+                else { throw error }
+                return try await tokenResponse(for: linked.user, req: req)
+            }
+        }
+
+        return try await tokenResponse(for: user, req: req)
+    }
+
     private func sendPasswordResetEmail(to email: String, token: String, req: Request) async throws {
         guard let apiKey = Environment.get("RESEND_API_KEY"), !apiKey.isEmpty,
               let from = Environment.get("PASSWORD_RESET_FROM_EMAIL"), !from.isEmpty,
@@ -222,5 +312,16 @@ struct AuthController: RouteCollection {
         guard response.status.code >= 200, response.status.code < 300 else {
             throw Abort(.badGateway, reason: "Email provider rejected the reset email.")
         }
+    }
+
+    private func tokenResponse(for user: User, req: Request) async throws -> TokenResponse {
+        let userID = try user.requireID()
+        let exp = ExpirationClaim(value: Date().addingTimeInterval(TimeInterval(Self.accessTokenTTLSeconds)))
+        let payload = AccessTokenPayload(sub: .init(value: userID.uuidString), exp: exp)
+        return TokenResponse(
+            accessToken: try await req.jwt.sign(payload),
+            tokenType: "Bearer",
+            expiresIn: Self.accessTokenTTLSeconds
+        )
     }
 }
