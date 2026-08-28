@@ -86,6 +86,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateWishlistViewer())
     app.migrations.add(CreateItemViewerState())
     app.migrations.add(AddItemQuantities())
+    app.migrations.add(CreatePasswordResetToken())
 
     // MARK: Routes
     try routes(app)
