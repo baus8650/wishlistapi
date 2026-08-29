@@ -1,3 +1,4 @@
+import Fluent
 import Vapor
 
 private struct UpdateProfileRequest: Content {
