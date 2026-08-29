@@ -27,8 +27,8 @@ struct SocialController: RouteCollection {
         routes.get("users", "search", use: search)
         routes.get("friends", use: friends)
         routes.get("friend-requests", use: requests)
-        routes.post("friend-requests", ":userID", use: requestFriend)
-        routes.post("friend-requests", ":friendshipID", "accept", use: accept)
+        routes.post("friend-requests", ":requestID", use: requestFriend)
+        routes.post("friend-requests", ":requestID", "accept", use: accept)
         routes.delete("friendships", ":friendshipID", use: removeFriendship)
         routes.put("blocks", ":userID", use: block)
         routes.delete("blocks", ":userID", use: unblock)
@@ -66,7 +66,7 @@ struct SocialController: RouteCollection {
 
     func requestFriend(req: Request) async throws -> FriendshipDTO {
         let me = try req.auth.require(User.self).requireID()
-        guard let other = req.parameters.get("userID", as: UUID.self), other != me,
+        guard let other = req.parameters.get("requestID", as: UUID.self), other != me,
               let user = try await User.find(other, on: req.db), user.isDiscoverable else { throw Abort(.notFound) }
         guard user.friendRequestPolicy != "nobody" else { throw Abort(.forbidden, reason: "This person is not accepting friend requests.") }
         guard !((try await blockPairs(for: me, on: req.db)).contains(other)) else { throw Abort(.notFound) }
@@ -80,7 +80,7 @@ struct SocialController: RouteCollection {
 
     func accept(req: Request) async throws -> FriendshipDTO {
         let me = try req.auth.require(User.self).requireID()
-        guard let id = req.parameters.get("friendshipID", as: UUID.self),
+        guard let id = req.parameters.get("requestID", as: UUID.self),
               let friendship = try await Friendship.query(on: req.db).filter(\.$id == id).filter(\.$recipient.$id == me).filter(\.$status == "pending").with(\.$requester).first()
         else { throw Abort(.notFound) }
         friendship.status = "accepted"
