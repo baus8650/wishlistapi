@@ -24,10 +24,12 @@ struct FriendProfileController: RouteCollection {
         guard let otherID = req.parameters.get("userID", as: UUID.self),
               otherID != me,
               let other = try await User.find(otherID, on: req.db),
-              try await areFriends(me, otherID, on: req.db),
               let username = other.username else {
             throw Abort(.notFound)
         }
+
+        let isFriend = try await areFriends(me, otherID, on: req.db)
+        guard isFriend || other.isDiscoverable else { throw Abort(.notFound) }
 
         let publicWishlists = try await Wishlist.query(on: req.db)
             .filter(\.$owner.$id == otherID)
@@ -36,10 +38,13 @@ struct FriendProfileController: RouteCollection {
             .all()
             .map { ProfileWishlistDTO(wishlistID: try $0.requireID(), title: $0.title, accountShareID: nil) }
 
-        let sharedAccess = try await SocialWishlistAccess.query(on: req.db)
-            .filter(\.$user.$id == me)
-            .with(\.$wishlist)
-            .all()
+        let sharedAccess: [SocialWishlistAccess]
+        if isFriend {
+            sharedAccess = try await SocialWishlistAccess.query(on: req.db)
+                .filter(\.$user.$id == me).with(\.$wishlist).all()
+        } else {
+            sharedAccess = []
+        }
         let sharedWishlists = try sharedAccess
             .filter { $0.wishlist.$owner.id == otherID }
             .map { ProfileWishlistDTO(wishlistID: try $0.wishlist.requireID(), title: $0.wishlist.title, accountShareID: $0.$viewer.id) }
