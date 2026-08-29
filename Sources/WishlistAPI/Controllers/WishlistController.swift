@@ -19,6 +19,7 @@ struct WishlistController: RouteCollection {
     }
 
     struct SettingsResponse: Content {
+        let visibility: String
         let showPurchaserNames: Bool
         let allowMultiplePurchases: Bool
         let allowNotes: Bool
@@ -26,6 +27,7 @@ struct WishlistController: RouteCollection {
     }
 
     struct UpdateSettingsRequest: Content {
+        let visibility: String?
         let showPurchaserNames: Bool?
         let allowMultiplePurchases: Bool?
         let allowNotes: Bool?
@@ -135,6 +137,7 @@ struct WishlistController: RouteCollection {
         else { throw Abort(.notFound) }
 
         return .init(
+            visibility: wishlist.visibility,
             showPurchaserNames: wishlist.showPurchaserNames,
             allowMultiplePurchases: wishlist.allowMultiplePurchases,
             allowNotes: wishlist.allowNotes,
@@ -163,14 +166,39 @@ struct WishlistController: RouteCollection {
         if let v = body.allowMultiplePurchases { wishlist.allowMultiplePurchases = v }
         if let v = body.allowNotes { wishlist.allowNotes = v }
         if let v = body.autoLockOnPurchase { wishlist.autoLockOnPurchase = v }
+        if let visibility = body.visibility {
+            guard ["private", "public"].contains(visibility) else {
+                throw Abort(.badRequest, reason: "Visibility must be private or public.")
+            }
+            if wishlist.visibility == "public", visibility == "private" {
+                try await revokePublicAccess(wishlistID: wishlistID, on: req.db)
+            }
+            wishlist.visibility = visibility
+        }
 
         try await wishlist.save(on: req.db)
 
         return .init(
+            visibility: wishlist.visibility,
             showPurchaserNames: wishlist.showPurchaserNames,
             allowMultiplePurchases: wishlist.allowMultiplePurchases,
             allowNotes: wishlist.allowNotes,
             autoLockOnPurchase: wishlist.autoLockOnPurchase
         )
+    }
+
+    private func revokePublicAccess(wishlistID: UUID, on db: any Database) async throws {
+        let accesses = try await PublicWishlistAccess.query(on: db)
+            .filter(\.$wishlist.$id == wishlistID).all()
+        for access in accesses {
+            let viewerID = access.$viewer.id
+            try await access.delete(on: db)
+            let isExplicitlyShared = try await SocialWishlistAccess.query(on: db)
+                .filter(\.$viewer.$id == viewerID).first() != nil
+            if !isExplicitlyShared,
+               let viewer = try await WishlistViewer.find(viewerID, on: db) {
+                try await viewer.delete(on: db)
+            }
+        }
     }
 }

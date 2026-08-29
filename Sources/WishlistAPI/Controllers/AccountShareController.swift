@@ -98,6 +98,11 @@ struct AccountShareController: RouteCollection {
             throw Abort(.forbidden, reason: "This wishlist is shared with you by a friend. Ask the owner to change its audience.")
         }
 
+        if let publicAccess = try await PublicWishlistAccess.query(on: req.db)
+            .filter(\.$viewer.$id == shareID).first() {
+            try await publicAccess.delete(on: req.db)
+        }
+
         // Keep recipient state intact, but detach this list from the account.
         viewer.$user.id = nil
         try await viewer.save(on: req.db)

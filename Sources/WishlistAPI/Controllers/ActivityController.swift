@@ -19,7 +19,9 @@ enum ActivityService {
     }
 
     static func notifyRecipients(wishlistID: UUID, actorID: UUID, kind: String, title: String, message: String, on db: any Database) async throws {
-        let recipients = Set(try await SocialWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).all().map(\.$user.id))
+        let socialRecipients = try await SocialWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).all().map(\.$user.id)
+        let publicRecipients = try await PublicWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).all().map(\.$user.id)
+        let recipients = Set(socialRecipients + publicRecipients)
         for userID in recipients { try await create(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message, on: db) }
     }
 }
