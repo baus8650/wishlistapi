@@ -80,6 +80,7 @@ public func configure(_ app: Application) async throws {
 
     app.migrations.add(CreateUser())
     app.migrations.add(AddDisplayNameToUser())
+    app.migrations.add(AddSocialProfileFields())
     app.migrations.add(CreateWishlist())
     app.migrations.add(CreateWishlistItem())
     app.migrations.add(CreateWishlistShareLink())
@@ -88,6 +89,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddItemQuantities())
     app.migrations.add(CreatePasswordResetToken())
     app.migrations.add(CreateAuthIdentity())
+    app.migrations.add(CreateSocialFeatures())
 
     // MARK: Routes
     try routes(app)

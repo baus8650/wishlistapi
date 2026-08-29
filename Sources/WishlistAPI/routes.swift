@@ -1,7 +1,10 @@
 import Vapor
 
 private struct UpdateProfileRequest: Content {
-    let displayName: String
+    let displayName: String?
+    let username: String?
+    let isDiscoverable: Bool?
+    let friendRequestPolicy: String?
 }
 
 func routes(_ app: Application) throws {
@@ -64,15 +67,26 @@ func routes(_ app: Application) throws {
     protected.patch("me") { req async throws -> User.Public in
         let user = try req.auth.require(User.self)
         let body = try req.content.decode(UpdateProfileRequest.self)
-        let displayName = body.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !displayName.isEmpty else {
-            throw Abort(.badRequest, reason: "Display name is required.")
+        if let requestedName = body.displayName {
+            let displayName = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !displayName.isEmpty, displayName.count <= 80 else { throw Abort(.badRequest, reason: "Display name must be 1–80 characters.") }
+            user.displayName = displayName
         }
-        guard displayName.count <= 80 else {
-            throw Abort(.badRequest, reason: "Display name must be 80 characters or fewer.")
+        if let requestedUsername = body.username {
+            let username = requestedUsername.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let allowed = username.range(of: #"^[a-z0-9_]{3,30}$"#, options: .regularExpression) != nil
+            guard allowed else { throw Abort(.badRequest, reason: "Usernames must be 3–30 letters, numbers, or underscores.") }
+            if let existing = try await User.query(on: req.db).filter(\.$username == username).first(), existing.id != user.id { throw Abort(.conflict, reason: "That username is already taken.") }
+            user.username = username
         }
-
-        user.displayName = displayName
+        if let isDiscoverable = body.isDiscoverable {
+            guard user.username != nil || !isDiscoverable else { throw Abort(.badRequest, reason: "Choose a username before enabling discovery.") }
+            user.isDiscoverable = isDiscoverable
+        }
+        if let policy = body.friendRequestPolicy {
+            guard ["everyone", "nobody"].contains(policy) else { throw Abort(.badRequest, reason: "Invalid friend request policy.") }
+            user.friendRequestPolicy = policy
+        }
         try await user.save(on: req.db)
         return user.toPublic()
     }
@@ -80,9 +94,12 @@ func routes(_ app: Application) throws {
     // Shared wishlists saved to the signed-in account.
     try protected.grouped("shared-wishlists").register(collection: AccountShareController())
 
+    try protected.register(collection: SocialController())
+
     // Mount wishlists at /wishlists
     let wishlists = protected.grouped("wishlists")
     try wishlists.register(collection: WishlistController())
+    try wishlists.register(collection: WishlistAudienceController())
 
     // Mount items at /wishlists (your WishlistItemController likely expects /wishlists/:id/items…)
     try wishlists.register(collection: WishlistItemController())

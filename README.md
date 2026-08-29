@@ -34,7 +34,9 @@ For a physical device, change `APIClient.baseURL` to the Mac's LAN address. Prod
 5. A recipient opens the link button, pastes the token, and can reserve items or add notes.
 6. The owner continues to see only the original wishlist and item details.
 
-Treat share tokens like unlisted links: anyone who has one can view that wishlist. Creating a new token does not revoke older tokens; revocation and rotation endpoints exist in the API but are not yet exposed in the iOS UI.
+Treat guest share tokens like unlisted links: anyone who has one can view that wishlist. The preferred sharing flow is now an explicit audience of mutually approved friends or private, owner-only groups. Accounts are undiscoverable by default, search never exposes email addresses, and removing or blocking a friend revokes social wishlist access immediately. Guest links remain available for people without accounts.
+
+Social endpoints live under `/v1/users/search`, `/v1/friends`, `/v1/friend-requests`, `/v1/friend-groups`, and `/v1/blocks`. Wishlist owners manage access with `GET` and `PUT /v1/wishlists/:wishlistID/audience`; the request body contains `userIDs` and `groupIDs` arrays. A friendship enables selection but never shares a wishlist automatically.
 
 ## Configuration
 

@@ -16,6 +16,15 @@ final class User: Model {
     @OptionalField(key: "display_name")
     var displayName: String?
 
+    @OptionalField(key: "username")
+    var username: String?
+
+    @Field(key: "is_discoverable")
+    var isDiscoverable: Bool
+
+    @Field(key: "friend_request_policy")
+    var friendRequestPolicy: String
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 
@@ -29,6 +38,8 @@ final class User: Model {
         self.email = email
         self.passwordHash = passwordHash
         self.displayName = displayName
+        self.isDiscoverable = false
+        self.friendRequestPolicy = "everyone"
     }
 }
 
@@ -38,6 +49,9 @@ extension User {
         let id: UUID?
         let email: String
         let displayName: String?
+        let username: String?
+        let isDiscoverable: Bool
+        let friendRequestPolicy: String
         let createdAt: Date?
         let updatedAt: Date?
     }
@@ -47,6 +61,9 @@ extension User {
             id: self.id,
             email: self.email,
             displayName: self.displayName,
+            username: self.username,
+            isDiscoverable: self.isDiscoverable,
+            friendRequestPolicy: self.friendRequestPolicy,
             createdAt: self.createdAt,
             updatedAt: self.updatedAt
         )
