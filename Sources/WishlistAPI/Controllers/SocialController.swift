@@ -5,6 +5,7 @@ struct SocialUserDTO: Content {
     let id: UUID
     let username: String
     let displayName: String?
+    let hasAvatar: Bool
 }
 
 struct FriendshipDTO: Content {
@@ -50,7 +51,7 @@ struct SocialController: RouteCollection {
             .limit(20).all()
             .compactMap { user in
                 guard let id = user.id, id != me, !blocks.contains(id), let username = user.username else { return nil }
-                return SocialUserDTO(id: id, username: username, displayName: user.displayName)
+                return SocialUserDTO(id: id, username: username, displayName: user.displayName, hasAvatar: user.avatarData != nil)
             }
     }
 
@@ -75,6 +76,9 @@ struct SocialController: RouteCollection {
         }
         let friendship = Friendship(requesterID: me, recipientID: other)
         try await friendship.save(on: req.db)
+        let requester = try req.auth.require(User.self)
+        let requesterName = requester.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? requester.displayName! : "Someone"
+        try await ActivityService.create(userID: other, actorID: me, kind: "friend_request", title: "New friend request", message: "\(requesterName) wants to be friends.", on: req.db)
         return FriendshipDTO(id: try friendship.requireID(), user: try socialUser(user), direction: "outgoing", status: "pending")
     }
 
@@ -85,6 +89,9 @@ struct SocialController: RouteCollection {
         else { throw Abort(.notFound) }
         friendship.status = "accepted"
         try await friendship.save(on: req.db)
+        let acceptingUser = try req.auth.require(User.self)
+        let acceptingName = acceptingUser.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? acceptingUser.displayName! : "Your friend"
+        try await ActivityService.create(userID: friendship.$requester.id, actorID: me, kind: "friend_accepted", title: "Friend request accepted", message: "\(acceptingName) accepted your friend request.", on: req.db)
         return FriendshipDTO(id: id, user: try socialUser(friendship.requester), direction: "incoming", status: "accepted")
     }
 
@@ -203,6 +210,6 @@ struct SocialController: RouteCollection {
 
     private func socialUser(_ user: User) throws -> SocialUserDTO {
         guard let id = user.id, let username = user.username else { throw Abort(.internalServerError) }
-        return .init(id: id, username: username, displayName: user.displayName)
+        return .init(id: id, username: username, displayName: user.displayName, hasAvatar: user.avatarData != nil)
     }
 }

@@ -1,0 +1,52 @@
+import Fluent
+import Vapor
+
+struct ActivityDTO: Content {
+    let id: UUID
+    let kind: String
+    let title: String
+    let message: String
+    let actorID: UUID?
+    let wishlistID: UUID?
+    let readAt: Date?
+    let createdAt: Date?
+}
+
+enum ActivityService {
+    static func create(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, kind: String, title: String, message: String, on db: any Database) async throws {
+        guard userID != actorID else { return }
+        try await ActivityNotification(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message).save(on: db)
+    }
+
+    static func notifyRecipients(wishlistID: UUID, actorID: UUID, kind: String, title: String, message: String, on db: any Database) async throws {
+        let recipients = Set(try await SocialWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).all().map(\.$user.id))
+        for userID in recipients { try await create(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message, on: db) }
+    }
+}
+
+struct ActivityController: RouteCollection {
+    func boot(routes: any RoutesBuilder) throws {
+        routes.get("activity", use: list)
+        routes.post("activity", "read-all", use: readAll)
+        routes.post("activity", ":notificationID", "read", use: read)
+    }
+
+    func list(req: Request) async throws -> [ActivityDTO] {
+        let userID = try req.auth.require(User.self).requireID()
+        return try await ActivityNotification.query(on: req.db).filter(\.$user.$id == userID).sort(\.$createdAt, .descending).limit(100).all().map(dto)
+    }
+
+    func read(req: Request) async throws -> ActivityDTO {
+        let userID = try req.auth.require(User.self).requireID()
+        guard let id = req.parameters.get("notificationID", as: UUID.self), let item = try await ActivityNotification.query(on: req.db).filter(\.$id == id).filter(\.$user.$id == userID).first() else { throw Abort(.notFound) }
+        item.readAt = item.readAt ?? Date(); try await item.save(on: req.db); return try dto(item)
+    }
+
+    func readAll(req: Request) async throws -> HTTPStatus {
+        let userID = try req.auth.require(User.self).requireID()
+        for item in try await ActivityNotification.query(on: req.db).filter(\.$user.$id == userID).filter(\.$readAt == nil).all() { item.readAt = Date(); try await item.save(on: req.db) }
+        return .noContent
+    }
+
+    private func dto(_ item: ActivityNotification) throws -> ActivityDTO { .init(id: try item.requireID(), kind: item.kind, title: item.title, message: item.message, actorID: item.$actor.id, wishlistID: item.$wishlist.id, readAt: item.readAt, createdAt: item.createdAt) }
+}

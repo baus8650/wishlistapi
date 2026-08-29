@@ -94,6 +94,7 @@ struct WishlistController: RouteCollection {
 
         wishlist.title = title
         try await wishlist.save(on: req.db)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "A shared wishlist was renamed to “\(title)”.", on: req.db)
         return wishlist
     }
 

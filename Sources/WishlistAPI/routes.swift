@@ -54,6 +54,7 @@ func routes(_ app: Application) throws {
 
     // Public sharing + recipient endpoints (anonymous-friendly)
     try v1.register(collection: RecipientShareController())
+    try v1.register(collection: AvatarController())
 
     // Protected routes (JWT)
     let protected = v1
@@ -100,6 +101,8 @@ func routes(_ app: Application) throws {
     try protected.grouped("shared-wishlists").register(collection: AccountShareController())
 
     try protected.register(collection: SocialController())
+    try protected.register(collection: AccountAvatarController())
+    try protected.register(collection: ActivityController())
 
     // Mount wishlists at /wishlists
     let wishlists = protected.grouped("wishlists")

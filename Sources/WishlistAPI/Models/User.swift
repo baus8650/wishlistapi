@@ -25,6 +25,12 @@ final class User: Model {
     @Field(key: "friend_request_policy")
     var friendRequestPolicy: String
 
+    @OptionalField(key: "avatar_data")
+    var avatarData: Data?
+
+    @OptionalField(key: "avatar_content_type")
+    var avatarContentType: String?
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 
@@ -52,6 +58,7 @@ extension User {
         let username: String?
         let isDiscoverable: Bool
         let friendRequestPolicy: String
+        let hasAvatar: Bool
         let createdAt: Date?
         let updatedAt: Date?
     }
@@ -64,6 +71,7 @@ extension User {
             username: self.username,
             isDiscoverable: self.isDiscoverable,
             friendRequestPolicy: self.friendRequestPolicy,
+            hasAvatar: self.avatarData != nil,
             createdAt: self.createdAt,
             updatedAt: self.updatedAt
         )

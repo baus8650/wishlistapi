@@ -72,6 +72,7 @@ struct WishlistItemController: RouteCollection {
         item.ownerNote = body.ownerNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         item.quantity = body.quantity ?? 1
         try await item.save(on: req.db)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item changed in “\(wishlist.title)”.", on: req.db)
         return item
     }
 
@@ -108,7 +109,7 @@ struct WishlistItemController: RouteCollection {
         }
 
         // Ownership check
-        guard let _ = try await Wishlist.query(on: req.db)
+        guard let wishlist = try await Wishlist.query(on: req.db)
             .filter(\.$id == wishlistID)
             .filter(\.$owner.$id == userId)
             .first()
@@ -132,6 +133,7 @@ struct WishlistItemController: RouteCollection {
             quantity: body.quantity ?? 1
         )
         try await item.save(on: req.db)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "New wishlist item", message: "A new item was added to “\(wishlist.title)”.", on: req.db)
         return item
     }
 
@@ -178,6 +180,7 @@ struct WishlistItemController: RouteCollection {
         }
 
         try await item.save(on: req.db)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item changed in “\(wishlist.title)”.", on: req.db)
         return item
     }
 
@@ -205,6 +208,7 @@ struct WishlistItemController: RouteCollection {
         guard wishlist.$owner.id == userId else { throw Abort(.notFound) }
 
         try await item.delete(on: req.db)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item was removed from “\(wishlist.title)”.", on: req.db)
         return .noContent
     }
 }

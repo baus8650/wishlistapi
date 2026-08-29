@@ -55,6 +55,9 @@ enum AudienceService {
     }
 
     static func sync(wishlistID: UUID, on db: any Database) async throws {
+        guard let wishlist = try await Wishlist.query(on: db).filter(\.$id == wishlistID).with(\.$owner).first() else { return }
+        let ownerID = wishlist.$owner.id
+        let ownerName = wishlist.owner.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? wishlist.owner.displayName! : "A friend"
         let grants = try await WishlistAudienceGrant.query(on: db).filter(\.$wishlist.$id == wishlistID).all()
         var desired = Set(grants.compactMap(\.$user.id))
         for groupID in grants.compactMap(\.$group.id) {
@@ -69,6 +72,7 @@ enum AudienceService {
             let viewer = WishlistViewer(wishlistId: wishlistID, userId: userID)
             try await viewer.save(on: db)
             try await SocialWishlistAccess(wishlistID: wishlistID, userID: userID, viewerID: viewer.requireID()).save(on: db)
+            try await ActivityService.create(userID: userID, actorID: ownerID, wishlistID: wishlistID, kind: "wishlist_shared", title: "Wishlist shared with you", message: "\(ownerName) shared “\(wishlist.title)” with you.", on: db)
         }
     }
 }
