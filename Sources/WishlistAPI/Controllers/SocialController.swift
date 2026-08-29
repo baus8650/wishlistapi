@@ -118,7 +118,15 @@ struct SocialController: RouteCollection {
 
     func groups(req: Request) async throws -> [FriendGroupDTO] {
         let me = try req.auth.require(User.self).requireID()
-        return try await FriendGroup.query(on: req.db).filter(\.$owner.$id == me).sort(\.$name).all().asyncMap { try await groupDTO($0, on: req.db) }
+        let ownedGroups = try await FriendGroup.query(on: req.db)
+            .filter(\.$owner.$id == me)
+            .sort(\.$name)
+            .all()
+        var result: [FriendGroupDTO] = []
+        for group in ownedGroups {
+            result.append(try await groupDTO(group, on: req.db))
+        }
+        return result
     }
 
     func createGroup(req: Request) async throws -> FriendGroupDTO {
