@@ -66,6 +66,16 @@ func routes(_ app: Application) throws {
         return user.toPublic()
     }
 
+    protected.delete("me") { req async throws -> HTTPStatus in
+        let user = try req.auth.require(User.self)
+        // User-owned and social records use cascading foreign keys. Anonymous
+        // wishlist viewers intentionally become detached when appropriate.
+        try await req.db.transaction { database in
+            try await user.delete(on: database)
+        }
+        return .noContent
+    }
+
     protected.patch("me") { req async throws -> User.Public in
         let user = try req.auth.require(User.self)
         let body = try req.content.decode(UpdateProfileRequest.self)
