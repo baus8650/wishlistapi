@@ -105,6 +105,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: ActivityController())
     try protected.register(collection: FriendProfileController())
     try protected.register(collection: PinController())
+    try protected.register(collection: NetworkController())
 
     // Mount wishlists at /wishlists
     let wishlists = protected.grouped("wishlists")
