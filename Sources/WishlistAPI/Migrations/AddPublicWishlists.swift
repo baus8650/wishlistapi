@@ -3,7 +3,7 @@ import Fluent
 struct AddWishlistVisibility: AsyncMigration {
     func prepare(on database: any Database) async throws {
         try await database.schema("wishlists")
-            .field("visibility", .string, .required, .sql(.default("private")))
+            .field("visibility", .string, .required, .sql(.default("public")))
             .update()
     }
 
