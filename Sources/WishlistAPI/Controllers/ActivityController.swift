@@ -31,6 +31,8 @@ struct ActivityController: RouteCollection {
         routes.get("activity", use: list)
         routes.post("activity", "read-all", use: readAll)
         routes.post("activity", ":notificationID", "read", use: read)
+        routes.delete("activity", use: clearAll)
+        routes.delete("activity", ":notificationID", use: delete)
     }
 
     func list(req: Request) async throws -> [ActivityDTO] {
@@ -47,6 +49,22 @@ struct ActivityController: RouteCollection {
     func readAll(req: Request) async throws -> HTTPStatus {
         let userID = try req.auth.require(User.self).requireID()
         for item in try await ActivityNotification.query(on: req.db).filter(\.$user.$id == userID).filter(\.$readAt == nil).all() { item.readAt = Date(); try await item.save(on: req.db) }
+        return .noContent
+    }
+
+    func delete(req: Request) async throws -> HTTPStatus {
+        let userID = try req.auth.require(User.self).requireID()
+        guard let id = req.parameters.get("notificationID", as: UUID.self),
+              let item = try await ActivityNotification.query(on: req.db)
+                .filter(\.$id == id).filter(\.$user.$id == userID).first()
+        else { throw Abort(.notFound) }
+        try await item.delete(on: req.db)
+        return .noContent
+    }
+
+    func clearAll(req: Request) async throws -> HTTPStatus {
+        let userID = try req.auth.require(User.self).requireID()
+        try await ActivityNotification.query(on: req.db).filter(\.$user.$id == userID).delete()
         return .noContent
     }
 

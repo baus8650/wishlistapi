@@ -17,6 +17,7 @@ struct FriendProfileController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         routes.get("users", ":userID", "profile", use: profile)
         routes.post("public-wishlists", ":wishlistID", "open", use: openPublicWishlist)
+        routes.get("friend-groups", ":groupID", "lists", use: groupLists)
     }
 
     func profile(req: Request) async throws -> FriendProfileDTO {
@@ -76,6 +77,20 @@ struct FriendProfileController: RouteCollection {
         try await viewer.save(on: req.db)
         try await PublicWishlistAccess(wishlistID: wishlistID, userID: me, viewerID: viewer.requireID()).save(on: req.db)
         return try savedShare(viewer, wishlist)
+    }
+
+    func groupLists(req: Request) async throws -> [ProfileWishlistDTO] {
+        let me = try req.auth.require(User.self).requireID()
+        guard let groupID = req.parameters.get("groupID", as: UUID.self),
+              try await FriendGroup.query(on: req.db).filter(\.$id == groupID).filter(\.$owner.$id == me).first() != nil
+        else { throw Abort(.notFound) }
+        let grants = try await WishlistAudienceGrant.query(on: req.db).filter(\.$group.$id == groupID).all()
+        var result: [ProfileWishlistDTO] = []
+        for grant in grants {
+            guard let wishlist = try await Wishlist.find(grant.$wishlist.id, on: req.db), wishlist.$owner.id == me else { continue }
+            result.append(.init(wishlistID: grant.$wishlist.id, title: wishlist.title, accountShareID: nil))
+        }
+        return result.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
     private func areFriends(_ first: UUID, _ second: UUID, on db: any Database) async throws -> Bool {
