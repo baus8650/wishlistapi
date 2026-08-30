@@ -73,14 +73,20 @@ struct SocialController: RouteCollection {
               let user = try await User.find(other, on: req.db), user.isDiscoverable else { throw Abort(.notFound) }
         guard user.friendRequestPolicy != "nobody" else { throw Abort(.forbidden, reason: "This person is not accepting friend requests.") }
         guard !((try await blockPairs(for: me, on: req.db)).contains(other)) else { throw Abort(.notFound) }
-        if let existing = try await relationship(between: me, and: other, on: req.db) {
-            throw Abort(.conflict, reason: existing.status == "accepted" ? "You are already friends." : "A friend request already exists.")
+        let existing = try await relationships(between: me, and: other, on: req.db)
+        if existing.contains(where: { $0.status == "accepted" }) {
+            throw Abort(.conflict, reason: "You are already friends.")
+        }
+        if let incoming = existing.first(where: { $0.status == "pending" && $0.$requester.id == other }) {
+            return try await accept(incoming, for: me, req: req)
+        }
+        if let outgoing = existing.first(where: { $0.status == "pending" && $0.$requester.id == me }) {
+            try await refreshFriendRequestActivity(requesterID: me, recipientID: other, req: req)
+            return FriendshipDTO(id: try outgoing.requireID(), user: try socialUser(user), direction: "outgoing", status: "pending")
         }
         let friendship = Friendship(requesterID: me, recipientID: other)
         try await friendship.save(on: req.db)
-        let requester = try req.auth.require(User.self)
-        let requesterName = requester.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? requester.displayName! : "Someone"
-        try await ActivityService.create(userID: other, actorID: me, kind: "friend_request", title: "New friend request", message: "\(requesterName) wants to be friends.", on: req.db)
+        try await refreshFriendRequestActivity(requesterID: me, recipientID: other, req: req)
         return FriendshipDTO(id: try friendship.requireID(), user: try socialUser(user), direction: "outgoing", status: "pending")
     }
 
@@ -122,6 +128,9 @@ struct SocialController: RouteCollection {
         let id = try friendship.requireID()
         friendship.status = "accepted"
         try await friendship.save(on: req.db)
+        for duplicate in try await relationships(between: me, and: friendship.$requester.id, on: req.db) where duplicate.id != id {
+            try await duplicate.delete(on: req.db)
+        }
         let acceptingUser = try req.auth.require(User.self)
         let acceptingName = acceptingUser.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? acceptingUser.displayName! : "Your friend"
         do {
@@ -137,7 +146,8 @@ struct SocialController: RouteCollection {
         guard let id = req.parameters.get("friendshipID", as: UUID.self), let friendship = try await Friendship.find(id, on: req.db),
               friendship.$requester.id == me || friendship.$recipient.id == me else { throw Abort(.notFound) }
         let other = friendship.$requester.id == me ? friendship.$recipient.id : friendship.$requester.id
-        try await friendship.delete(on: req.db)
+        for row in try await relationships(between: me, and: other, on: req.db) { try await row.delete(on: req.db) }
+        try await deleteFriendRequestActivities(between: me, and: other, on: req.db)
         try await revokeSocialSharing(between: me, and: other, on: req.db)
         return .noContent
     }
@@ -145,7 +155,8 @@ struct SocialController: RouteCollection {
     func block(req: Request) async throws -> HTTPStatus {
         let me = try req.auth.require(User.self).requireID()
         guard let other = req.parameters.get("userID", as: UUID.self), other != me, try await User.find(other, on: req.db) != nil else { throw Abort(.notFound) }
-        if let friendship = try await relationship(between: me, and: other, on: req.db) { try await friendship.delete(on: req.db) }
+        for friendship in try await relationships(between: me, and: other, on: req.db) { try await friendship.delete(on: req.db) }
+        try await deleteFriendRequestActivities(between: me, and: other, on: req.db)
         if try await UserBlock.query(on: req.db).filter(\.$blocker.$id == me).filter(\.$blocked.$id == other).first() == nil {
             try await UserBlock(blockerID: me, blockedID: other).save(on: req.db)
         }
@@ -225,6 +236,37 @@ struct SocialController: RouteCollection {
     private func relationship(between first: UUID, and second: UUID, on db: any Database) async throws -> Friendship? {
         if let row = try await Friendship.query(on: db).filter(\.$requester.$id == first).filter(\.$recipient.$id == second).first() { return row }
         return try await Friendship.query(on: db).filter(\.$requester.$id == second).filter(\.$recipient.$id == first).first()
+    }
+
+    private func relationships(between first: UUID, and second: UUID, on db: any Database) async throws -> [Friendship] {
+        try await Friendship.query(on: db)
+            .group(.or) { group in
+                group.group(.and) { $0.filter(\.$requester.$id == first).filter(\.$recipient.$id == second) }
+                group.group(.and) { $0.filter(\.$requester.$id == second).filter(\.$recipient.$id == first) }
+            }
+            .with(\.$requester)
+            .all()
+    }
+
+    private func refreshFriendRequestActivity(requesterID: UUID, recipientID: UUID, req: Request) async throws {
+        try await ActivityNotification.query(on: req.db)
+            .filter(\.$user.$id == recipientID)
+            .filter(\.$actor.$id == requesterID)
+            .filter(\.$kind == "friend_request")
+            .delete()
+        let requester = try req.auth.require(User.self)
+        let name = requester.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? requester.displayName! : "Someone"
+        try await ActivityService.create(userID: recipientID, actorID: requesterID, kind: "friend_request", title: "New friend request", message: "\(name) wants to be friends.", on: req.db)
+    }
+
+    private func deleteFriendRequestActivities(between first: UUID, and second: UUID, on db: any Database) async throws {
+        try await ActivityNotification.query(on: db)
+            .group(.or) { group in
+                group.group(.and) { $0.filter(\.$user.$id == first).filter(\.$actor.$id == second) }
+                group.group(.and) { $0.filter(\.$user.$id == second).filter(\.$actor.$id == first) }
+            }
+            .filter(\.$kind == "friend_request")
+            .delete()
     }
 
     private func blockPairs(for me: UUID, on db: any Database) async throws -> Set<UUID> {

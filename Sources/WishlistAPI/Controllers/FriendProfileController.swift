@@ -28,6 +28,7 @@ struct FriendProfileController: RouteCollection {
               let username = other.username else {
             throw Abort(.notFound)
         }
+        guard try await !isBlocked(me, otherID, on: req.db) else { throw Abort(.notFound) }
 
         let isFriend = try await areFriends(me, otherID, on: req.db)
         guard isFriend || other.isDiscoverable else { throw Abort(.notFound) }
@@ -102,6 +103,15 @@ struct FriendProfileController: RouteCollection {
             .filter(\.$status == "accepted")
             .first()
         return rows != nil
+    }
+
+    private func isBlocked(_ first: UUID, _ second: UUID, on db: any Database) async throws -> Bool {
+        try await UserBlock.query(on: db)
+            .group(.or) { group in
+                group.group(.and) { $0.filter(\.$blocker.$id == first).filter(\.$blocked.$id == second) }
+                group.group(.and) { $0.filter(\.$blocker.$id == second).filter(\.$blocked.$id == first) }
+            }
+            .first() != nil
     }
 
     private func savedShare(_ viewer: WishlistViewer, _ wishlist: Wishlist) throws -> AccountShareController.SavedShare {
