@@ -12,6 +12,7 @@ struct WishlistController: RouteCollection {
 
     struct CreateRequest: Content {
         let title: String
+        let visibility: String?
     }
 
     struct UpdateRequest: Content {
@@ -66,7 +67,12 @@ struct WishlistController: RouteCollection {
             throw Abort(.badRequest, reason: "Title is required.")
         }
 
+        let visibility = body.visibility ?? "public"
+        guard ["public", "private"].contains(visibility) else {
+            throw Abort(.badRequest, reason: "Visibility must be public or private.")
+        }
         let wishlist = Wishlist(ownerUserId: userId, title: title)
+        wishlist.visibility = visibility
         try await wishlist.save(on: req.db)
         return wishlist
     }

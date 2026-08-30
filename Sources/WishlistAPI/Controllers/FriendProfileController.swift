@@ -24,8 +24,7 @@ struct FriendProfileController: RouteCollection {
         let me = try req.auth.require(User.self).requireID()
         guard let otherID = req.parameters.get("userID", as: UUID.self),
               otherID != me,
-              let other = try await User.find(otherID, on: req.db),
-              let username = other.username else {
+              let other = try await User.find(otherID, on: req.db) else {
             throw Abort(.notFound)
         }
         guard try await !isBlocked(me, otherID, on: req.db) else { throw Abort(.notFound) }
@@ -52,6 +51,7 @@ struct FriendProfileController: RouteCollection {
             .map { ProfileWishlistDTO(wishlistID: try $0.wishlist.requireID(), title: $0.wishlist.title, accountShareID: $0.$viewer.id) }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
 
+        let username = other.username ?? "hushful_\(otherID.uuidString.prefix(8).lowercased())"
         return FriendProfileDTO(
             user: SocialUserDTO(id: otherID, username: username, displayName: other.displayName, hasAvatar: other.avatarData != nil),
             publicWishlists: publicWishlists,
