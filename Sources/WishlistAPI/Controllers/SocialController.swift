@@ -30,6 +30,8 @@ struct SocialController: RouteCollection {
         routes.get("friend-requests", use: requests)
         routes.post("friend-requests", ":requestID", use: requestFriend)
         routes.post("friend-requests", ":requestID", "accept", use: accept)
+        routes.post("friend-requests", "from", ":userID", "accept", use: acceptFromUser)
+        routes.delete("friend-requests", "from", ":userID", use: declineFromUser)
         routes.delete("friendships", ":friendshipID", use: removeFriendship)
         routes.put("blocks", ":userID", use: block)
         routes.delete("blocks", ":userID", use: unblock)
@@ -87,6 +89,37 @@ struct SocialController: RouteCollection {
         guard let id = req.parameters.get("requestID", as: UUID.self),
               let friendship = try await Friendship.query(on: req.db).filter(\.$id == id).filter(\.$recipient.$id == me).filter(\.$status == "pending").with(\.$requester).first()
         else { throw Abort(.notFound) }
+        return try await accept(friendship, for: me, req: req)
+    }
+
+    func acceptFromUser(req: Request) async throws -> FriendshipDTO {
+        let me = try req.auth.require(User.self).requireID()
+        guard let requesterID = req.parameters.get("userID", as: UUID.self),
+              let friendship = try await Friendship.query(on: req.db)
+                .filter(\.$requester.$id == requesterID)
+                .filter(\.$recipient.$id == me)
+                .filter(\.$status == "pending")
+                .with(\.$requester)
+                .first()
+        else { throw Abort(.notFound, reason: "This friend request is no longer pending.") }
+        return try await accept(friendship, for: me, req: req)
+    }
+
+    func declineFromUser(req: Request) async throws -> HTTPStatus {
+        let me = try req.auth.require(User.self).requireID()
+        guard let requesterID = req.parameters.get("userID", as: UUID.self),
+              let friendship = try await Friendship.query(on: req.db)
+                .filter(\.$requester.$id == requesterID)
+                .filter(\.$recipient.$id == me)
+                .filter(\.$status == "pending")
+                .first()
+        else { throw Abort(.notFound, reason: "This friend request is no longer pending.") }
+        try await friendship.delete(on: req.db)
+        return .noContent
+    }
+
+    private func accept(_ friendship: Friendship, for me: UUID, req: Request) async throws -> FriendshipDTO {
+        let id = try friendship.requireID()
         friendship.status = "accepted"
         try await friendship.save(on: req.db)
         let acceptingUser = try req.auth.require(User.self)
