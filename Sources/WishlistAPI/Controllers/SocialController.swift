@@ -91,7 +91,11 @@ struct SocialController: RouteCollection {
         try await friendship.save(on: req.db)
         let acceptingUser = try req.auth.require(User.self)
         let acceptingName = acceptingUser.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? acceptingUser.displayName! : "Your friend"
-        try await ActivityService.create(userID: friendship.$requester.id, actorID: me, kind: "friend_accepted", title: "Friend request accepted", message: "\(acceptingName) accepted your friend request.", on: req.db)
+        do {
+            try await ActivityService.create(userID: friendship.$requester.id, actorID: me, kind: "friend_accepted", title: "Friend request accepted", message: "\(acceptingName) accepted your friend request.", on: req.db)
+        } catch {
+            req.logger.warning("Friend request was accepted, but its activity notification could not be created: \(error)")
+        }
         return FriendshipDTO(id: id, user: try socialUser(friendship.requester), direction: "incoming", status: "accepted")
     }
 
@@ -209,7 +213,10 @@ struct SocialController: RouteCollection {
     }
 
     private func socialUser(_ user: User) throws -> SocialUserDTO {
-        guard let id = user.id, let username = user.username else { throw Abort(.internalServerError) }
+        guard let id = user.id else { throw Abort(.internalServerError) }
+        // Friendships created while usernames were still optional must remain
+        // usable. This fallback reveals no email or other private information.
+        let username = user.username ?? "hushful_\(id.uuidString.prefix(8).lowercased())"
         return .init(id: id, username: username, displayName: user.displayName, hasAvatar: user.avatarData != nil)
     }
 }
