@@ -3,9 +3,9 @@ import Vapor
 
 struct WebMetricsController {
     struct TrackRequest: Content { let visitorID: String; let path: String; let signedIn: Bool }
-    struct Daily: Content { let date: String; let views: Int; let visitors: Int }
+    struct Daily: Content { let date: String; let views: Int; let visitors: Int; let signups: Int }
     struct PathCount: Content { let path: String; let views: Int }
-    struct Summary: Content { let days: Int; let views: Int; let visitors: Int; let signedInViews: Int; let daily: [Daily]; let topPaths: [PathCount] }
+    struct Summary: Content { let days: Int; let views: Int; let visitors: Int; let signedInViews: Int; let totalAccounts: Int; let newAccounts: Int; let daily: [Daily]; let topPaths: [PathCount] }
 
     func track(req: Request) async throws -> HTTPStatus {
         let body = try req.content.decode(TrackRequest.self)
@@ -24,10 +24,17 @@ struct WebMetricsController {
         let days = min(max(req.query[Int.self, at: "days"] ?? 30, 1), 365)
         let start = Calendar.current.date(byAdding: .day, value: -(days - 1), to: Calendar.current.startOfDay(for: Date()))!
         let events = try await WebMetricEvent.query(on: req.db).filter(\.$createdAt >= start).all()
+        let totalAccounts = try await User.query(on: req.db).count()
+        let recentAccounts = try await User.query(on: req.db).filter(\.$createdAt >= start).all()
         let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
         let grouped = Dictionary(grouping: events) { formatter.string(from: $0.createdAt ?? Date()) }
-        let daily = grouped.map { Daily(date: $0.key, views: $0.value.count, visitors: Set($0.value.map(\.visitorID)).count) }.sorted { $0.date < $1.date }
+        let signups = Dictionary(grouping: recentAccounts) { formatter.string(from: $0.createdAt ?? Date()) }
+        let dates = Set(grouped.keys).union(signups.keys)
+        let daily = dates.map { date in
+            let dayEvents = grouped[date] ?? []
+            return Daily(date: date, views: dayEvents.count, visitors: Set(dayEvents.map(\.visitorID)).count, signups: signups[date]?.count ?? 0)
+        }.sorted { $0.date < $1.date }
         let paths = Dictionary(grouping: events) { $0.path }.map { PathCount(path: $0.key, views: $0.value.count) }.sorted { $0.views > $1.views }.prefix(10)
-        return .init(days: days, views: events.count, visitors: Set(events.map(\.visitorID)).count, signedInViews: events.filter { $0.signedIn }.count, daily: daily, topPaths: Array(paths))
+        return .init(days: days, views: events.count, visitors: Set(events.map(\.visitorID)).count, signedInViews: events.filter { $0.signedIn }.count, totalAccounts: totalAccounts, newAccounts: recentAccounts.count, daily: daily, topPaths: Array(paths))
     }
 }
