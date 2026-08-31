@@ -137,7 +137,7 @@ struct SocialController: RouteCollection {
         let acceptingUser = try req.auth.require(User.self)
         let acceptingName = acceptingUser.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? acceptingUser.displayName! : "Your friend"
         do {
-            try await ActivityService.create(userID: friendship.$requester.id, actorID: me, kind: "friend_accepted", title: "Friend request accepted", message: "\(acceptingName) accepted your friend request.", on: req.db)
+            try await ActivityService.create(userID: friendship.$requester.id, actorID: me, kind: "friend_accepted", title: "Friend request accepted", message: "\(acceptingName) accepted your friend request.", on: req.db, client: req.client, logger: req.logger)
         } catch {
             req.logger.warning("Friend request was accepted, but its activity notification could not be created: \(error)")
         }
@@ -259,7 +259,7 @@ struct SocialController: RouteCollection {
             .delete()
         let requester = try req.auth.require(User.self)
         let name = requester.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? requester.displayName! : "Someone"
-        try await ActivityService.create(userID: recipientID, actorID: requesterID, kind: "friend_request", title: "New friend request", message: "\(name) wants to be friends.", on: req.db)
+        try await ActivityService.create(userID: recipientID, actorID: requesterID, kind: "friend_request", title: "New friend request", message: "\(name) wants to be friends.", on: req.db, client: req.client, logger: req.logger)
     }
 
     private func deleteFriendRequestActivities(between first: UUID, and second: UUID, on db: any Database) async throws {

@@ -13,18 +13,21 @@ struct ActivityDTO: Content {
 }
 
 enum ActivityService {
-    static func create(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, kind: String, title: String, message: String, on db: any Database) async throws {
+    static func create(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
         guard userID != actorID else { return }
         try await ActivityNotification(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message).save(on: db)
+        if let client, let logger {
+            await APNSService.send(userID: userID, kind: kind, title: title, message: message, wishlistID: wishlistID, on: db, client: client, logger: logger)
+        }
     }
 
-    static func notifyRecipients(wishlistID: UUID, actorID: UUID, kind: String, title: String, message: String, on db: any Database) async throws {
+    static func notifyRecipients(wishlistID: UUID, actorID: UUID, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
         let socialAccess = try await SocialWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).with(\.$viewer).all()
         let publicAccess = try await PublicWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).with(\.$viewer).all()
         let socialRecipients = socialAccess.filter { $0.viewer.notificationsEnabled }.map(\.$user.id)
         let publicRecipients = publicAccess.filter { $0.viewer.notificationsEnabled }.compactMap { $0.viewer.$user.id }
         let recipients = Set(socialRecipients + publicRecipients)
-        for userID in recipients { try await create(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message, on: db) }
+        for userID in recipients { try await create(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message, on: db, client: client, logger: logger) }
     }
 }
 

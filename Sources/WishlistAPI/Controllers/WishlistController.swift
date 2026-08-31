@@ -180,7 +180,7 @@ struct WishlistController: RouteCollection {
 
         wishlist.title = title
         try await wishlist.save(on: req.db)
-        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "A shared wishlist was renamed to “\(title)”.", on: req.db)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "A shared wishlist was renamed to “\(title)”.", on: req.db, client: req.client, logger: req.logger)
         let isCollaborative = try await WishlistCollaborator.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistID).first() != nil
         return try summary(wishlist, for: userId, isCollaborative: isCollaborative)

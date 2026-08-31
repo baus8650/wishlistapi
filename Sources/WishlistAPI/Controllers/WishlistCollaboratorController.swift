@@ -56,7 +56,8 @@ struct WishlistCollaboratorController: RouteCollection {
             try await ActivityService.create(
                 userID: newID, actorID: userID, wishlistID: wishlistID,
                 kind: "wishlist_collaboration", title: "You’re now a wishlist owner",
-                message: "You can now collaborate on “\(wishlist.title)”.", on: req.db
+                message: "You can now collaborate on “\(wishlist.title)”.", on: req.db,
+                client: req.client, logger: req.logger
             )
         }
         wishlist.collaborationMode = body.mode

@@ -28,7 +28,7 @@ struct WishlistAudienceController: RouteCollection {
         try await WishlistAudienceGrant.query(on: req.db).filter(\.$wishlist.$id == wishlistID).delete()
         for id in userIDs { try await WishlistAudienceGrant(wishlistID: wishlistID, userID: id).save(on: req.db) }
         for id in groupIDs { try await WishlistAudienceGrant(wishlistID: wishlistID, groupID: id).save(on: req.db) }
-        try await AudienceService.sync(wishlistID: wishlistID, on: req.db)
+        try await AudienceService.sync(wishlistID: wishlistID, on: req.db, client: req.client, logger: req.logger)
         return Audience(userIDs: userIDs, groupIDs: groupIDs)
     }
 
@@ -54,7 +54,7 @@ enum AudienceService {
         for id in ids { try await sync(wishlistID: id, on: db) }
     }
 
-    static func sync(wishlistID: UUID, on db: any Database) async throws {
+    static func sync(wishlistID: UUID, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
         guard let wishlist = try await Wishlist.query(on: db).filter(\.$id == wishlistID).with(\.$owner).first() else { return }
         let ownerID = wishlist.$owner.id
         let ownerName = wishlist.owner.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? wishlist.owner.displayName! : "A friend"
@@ -72,7 +72,7 @@ enum AudienceService {
             let viewer = WishlistViewer(wishlistId: wishlistID, userId: userID)
             try await viewer.save(on: db)
             try await SocialWishlistAccess(wishlistID: wishlistID, userID: userID, viewerID: viewer.requireID()).save(on: db)
-            try await ActivityService.create(userID: userID, actorID: ownerID, wishlistID: wishlistID, kind: "wishlist_shared", title: "Wishlist shared with you", message: "\(ownerName) shared “\(wishlist.title)” with you.", on: db)
+            try await ActivityService.create(userID: userID, actorID: ownerID, wishlistID: wishlistID, kind: "wishlist_shared", title: "Wishlist shared with you", message: "\(ownerName) shared “\(wishlist.title)” with you.", on: db, client: client, logger: logger)
         }
     }
 }
