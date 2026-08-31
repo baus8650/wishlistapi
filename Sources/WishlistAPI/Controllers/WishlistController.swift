@@ -25,6 +25,7 @@ struct WishlistController: RouteCollection {
         let description: String?
         let customColorHex: String?
         let reminderDate: Date?
+        let showInsights: Bool
     }
 
     struct CreateRequest: Content {
@@ -55,6 +56,7 @@ struct WishlistController: RouteCollection {
         let description: String?
         let customColorHex: String?
         let reminderDate: Date?
+        let showInsights: Bool
     }
 
     struct UpdateSettingsRequest: Content {
@@ -75,6 +77,7 @@ struct WishlistController: RouteCollection {
         let clearCustomColor: Bool?
         let reminderDate: Date?
         let clearReminderDate: Bool?
+        let showInsights: Bool?
     }
 
     func boot(routes: any RoutesBuilder) throws {
@@ -243,7 +246,7 @@ struct WishlistController: RouteCollection {
             colorTheme: wishlist.colorTheme,
             isArchived: wishlist.isArchived
             , description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
-            reminderDate: wishlist.reminderDate
+            reminderDate: wishlist.reminderDate, showInsights: wishlist.showInsights
         )
     }
 
@@ -286,6 +289,7 @@ struct WishlistController: RouteCollection {
         }
         if body.clearReminderDate == true { wishlist.reminderDate = nil }
         else if let date = body.reminderDate { wishlist.reminderDate = date }
+        if let value = body.showInsights { wishlist.showInsights = value }
         if let visibility = body.visibility {
             guard ["private", "public"].contains(visibility) else {
                 throw Abort(.badRequest, reason: "Visibility must be private or public.")
@@ -310,7 +314,7 @@ struct WishlistController: RouteCollection {
             colorTheme: wishlist.colorTheme,
             isArchived: wishlist.isArchived
             , description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
-            reminderDate: wishlist.reminderDate
+            reminderDate: wishlist.reminderDate, showInsights: wishlist.showInsights
         )
     }
 
@@ -325,6 +329,7 @@ struct WishlistController: RouteCollection {
         copy.icon = source.icon
         copy.colorTheme = source.colorTheme
         copy.customColorHex = source.customColorHex
+        copy.showInsights = source.showInsights
         copy.collaborationMode = source.collaborationMode
         try await copy.save(on: req.db)
 
@@ -363,7 +368,7 @@ struct WishlistController: RouteCollection {
               reminderEnabled: wishlist.reminderEnabled, icon: wishlist.icon,
               colorTheme: wishlist.colorTheme, isArchived: wishlist.isArchived,
               description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
-              reminderDate: wishlist.reminderDate)
+              reminderDate: wishlist.reminderDate, showInsights: wishlist.showInsights)
     }
 }
 
