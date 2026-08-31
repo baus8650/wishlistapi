@@ -86,6 +86,7 @@ func routes(_ app: Application) throws {
             let displayName = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !displayName.isEmpty, displayName.count <= 80 else { throw Abort(.badRequest, reason: "Display name must be 1–80 characters.") }
             user.displayName = displayName
+            user.displayNameSearch = displayName.lowercased()
         }
         if let requestedUsername = body.username {
             let username = requestedUsername.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)

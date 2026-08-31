@@ -49,7 +49,10 @@ struct SocialController: RouteCollection {
         let blocks = try await blockPairs(for: me, on: req.db)
         return try await User.query(on: req.db)
             .filter(\.$isDiscoverable == true)
-            .filter(\.$username ~~ q)
+            .group(.or) { matches in
+                matches.filter(\.$username ~~ q)
+                matches.filter(\.$displayNameSearch ~~ q)
+            }
             .limit(20).all()
             .compactMap { user in
                 guard let id = user.id, id != me, !blocks.contains(id), let username = user.username else { return nil }

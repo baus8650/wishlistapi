@@ -16,6 +16,9 @@ final class User: Model {
     @OptionalField(key: "display_name")
     var displayName: String?
 
+    @OptionalField(key: "display_name_search")
+    var displayNameSearch: String?
+
     @OptionalField(key: "username")
     var username: String?
 
@@ -44,6 +47,7 @@ final class User: Model {
         self.email = email
         self.passwordHash = passwordHash
         self.displayName = displayName
+        self.displayNameSearch = displayName?.lowercased()
         self.isDiscoverable = false
         self.friendRequestPolicy = "everyone"
     }

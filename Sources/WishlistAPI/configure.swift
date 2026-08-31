@@ -80,6 +80,7 @@ public func configure(_ app: Application) async throws {
 
     app.migrations.add(CreateUser())
     app.migrations.add(AddDisplayNameToUser())
+    app.migrations.add(AddUserDisplayNameSearch())
     app.migrations.add(AddSocialProfileFields())
     app.migrations.add(CreateWishlist())
     app.migrations.add(CreateWishlistItem())
