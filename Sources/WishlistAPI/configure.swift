@@ -100,6 +100,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateWishlistCollaborators())
     app.migrations.add(AddSharedListNotifications())
     app.migrations.add(CreateWishlistItemImages())
+    app.migrations.add(CreateWebMetrics())
 
     // MARK: Routes
     try routes(app)

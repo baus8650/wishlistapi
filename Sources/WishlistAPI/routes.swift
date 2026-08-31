@@ -48,6 +48,8 @@ func routes(_ app: Application) throws {
 
     // Versioned API
     let v1 = app.grouped("v1")
+    let metrics = WebMetricsController()
+    v1.post("metrics", "events", use: metrics.track)
 
     // Auth (register/login)
     try v1.register(collection: AuthController())
@@ -117,6 +119,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: FriendProfileController())
     try protected.register(collection: PinController())
     try protected.register(collection: NetworkController())
+    protected.get("metrics", "summary", use: metrics.summary)
 
     // Mount wishlists at /wishlists
     let wishlists = protected.grouped("wishlists")
