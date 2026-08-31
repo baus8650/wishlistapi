@@ -55,6 +55,7 @@ func routes(_ app: Application) throws {
     // Public sharing + recipient endpoints (anonymous-friendly)
     try v1.register(collection: RecipientShareController())
     try v1.register(collection: AvatarController())
+    try v1.register(collection: WishlistItemImageController())
 
     // Protected routes (JWT)
     let protected = v1
@@ -125,6 +126,7 @@ func routes(_ app: Application) throws {
 
     // Mount items at /wishlists (your WishlistItemController likely expects /wishlists/:id/items…)
     try wishlists.register(collection: WishlistItemController())
+    try wishlists.register(collection: AccountWishlistItemImageController())
 
     // Share link creation should also live under /wishlists/...
     try wishlists.register(collection: OwnerShareController())

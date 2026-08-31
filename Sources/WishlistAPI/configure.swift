@@ -99,6 +99,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateWishlistItemMemberships())
     app.migrations.add(CreateWishlistCollaborators())
     app.migrations.add(AddSharedListNotifications())
+    app.migrations.add(CreateWishlistItemImages())
 
     // MARK: Routes
     try routes(app)
