@@ -117,6 +117,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: SocialController())
     try protected.register(collection: AccountAvatarController())
     try protected.register(collection: ActivityController())
+    try protected.register(collection: PushDeviceController())
     try protected.register(collection: FriendProfileController())
     try protected.register(collection: PinController())
     try protected.register(collection: NetworkController())
