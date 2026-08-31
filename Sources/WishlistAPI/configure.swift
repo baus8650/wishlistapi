@@ -104,6 +104,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateWebMetrics())
     app.migrations.add(AddWishlistProFeatures())
     app.migrations.add(GrandfatherExistingUsersIntoPro())
+    app.migrations.add(RevokeGrandfatheredProForPurchaseTesting())
 
     // MARK: Routes
     try routes(app)
