@@ -23,6 +23,9 @@ final class Wishlist: Model, Content {
     @Field(key: "visibility")
     var visibility: String
 
+    @Field(key: "position")
+    var position: Int
+
     // MARK: Wishlist Settings
 
     @Field(key: "show_purchaser_names")
@@ -59,6 +62,7 @@ final class Wishlist: Model, Content {
         self.$owner.id = ownerUserId
         self.title = title
         self.visibility = visibility
+        self.position = 0
         self.showPurchaserNames = showPurchaserNames
         self.allowMultiplePurchases = allowMultiplePurchases
         self.allowNotes = allowNotes

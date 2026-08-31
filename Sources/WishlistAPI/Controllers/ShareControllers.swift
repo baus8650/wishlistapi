@@ -121,6 +121,7 @@ struct RecipientShareController: RouteCollection {
 
         let items = try await WishlistItem.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistId)
+            .sort(\.$position, .ascending)
             .sort(\.$createdAt, .ascending)
             .all()
 
@@ -163,6 +164,7 @@ struct RecipientShareController: RouteCollection {
 
         let items = try await WishlistItem.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistId)
+            .sort(\.$position, .ascending)
             .sort(\.$createdAt, .ascending)
             .all()
 

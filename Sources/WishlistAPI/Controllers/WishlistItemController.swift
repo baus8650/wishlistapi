@@ -26,10 +26,13 @@ struct WishlistItemController: RouteCollection {
         let quantity: Int?
     }
 
+    struct ReorderRequest: Content { let ids: [UUID] }
+
     func boot(routes: any RoutesBuilder) throws {
         // Owner-only endpoints (mounted under /wishlists)
         routes.get(":wishlistID", "items", use: listForWishlist)
         routes.post(":wishlistID", "items", use: createForWishlist)
+        routes.put(":wishlistID", "items", "order", use: reorder)
 
         // Item-level endpoints under /wishlists
         routes.put(":wishlistID", "items", ":itemID", use: replace)
@@ -95,6 +98,7 @@ struct WishlistItemController: RouteCollection {
 
         return try await WishlistItem.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistID)
+            .sort(\.$position, .ascending)
             .sort(\.$createdAt, .ascending)
             .all()
     }
@@ -132,9 +136,35 @@ struct WishlistItemController: RouteCollection {
             ownerNote: body.ownerNote,
             quantity: body.quantity ?? 1
         )
+        let existing = try await WishlistItem.query(on: req.db).filter(\.$wishlist.$id == wishlistID).all()
+        for current in existing {
+            current.position += 1
+            try await current.save(on: req.db)
+        }
         try await item.save(on: req.db)
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "New wishlist item", message: "A new item was added to “\(wishlist.title)”.", on: req.db)
         return item
+    }
+
+    func reorder(req: Request) async throws -> HTTPStatus {
+        let userID = try req.auth.require(User.self).requireID()
+        guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
+              try await Wishlist.query(on: req.db).filter(\.$id == wishlistID).filter(\.$owner.$id == userID).first() != nil else {
+            throw Abort(.notFound)
+        }
+        let body = try req.content.decode(ReorderRequest.self)
+        let items = try await WishlistItem.query(on: req.db).filter(\.$wishlist.$id == wishlistID).all()
+        let existingIDs = Set(try items.map { try $0.requireID() })
+        guard body.ids.count == existingIDs.count, Set(body.ids) == existingIDs else {
+            throw Abort(.badRequest, reason: "The order must include each item exactly once.")
+        }
+        let byID = Dictionary(uniqueKeysWithValues: try items.map { (try $0.requireID(), $0) })
+        for (position, id) in body.ids.enumerated() {
+            guard let item = byID[id] else { continue }
+            item.position = position
+            try await item.save(on: req.db)
+        }
+        return .noContent
     }
 
     // PATCH /wishlists/:wishlistID/items/:itemID

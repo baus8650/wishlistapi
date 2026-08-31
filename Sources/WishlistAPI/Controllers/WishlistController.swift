@@ -19,6 +19,10 @@ struct WishlistController: RouteCollection {
         let title: String
     }
 
+    struct ReorderRequest: Content {
+        let ids: [UUID]
+    }
+
     struct SettingsResponse: Content {
         let visibility: String
         let showPurchaserNames: Bool
@@ -39,6 +43,7 @@ struct WishlistController: RouteCollection {
         // This controller expects to be mounted under an authenticated/protected group.
         routes.get(use: index)
         routes.post(use: create)
+        routes.put("order", use: reorder)
         routes.patch(":wishlistID", use: update)
         routes.get(":wishlistID", "settings", use: getSettings)
         routes.patch(":wishlistID", "settings", use: updateSettings)
@@ -52,6 +57,7 @@ struct WishlistController: RouteCollection {
 
         return try await Wishlist.query(on: req.db)
             .filter(\.$owner.$id == userId)
+            .sort(\.$position, .ascending)
             .sort(\.$createdAt, .descending)
             .all()
     }
@@ -73,8 +79,30 @@ struct WishlistController: RouteCollection {
         }
         let wishlist = Wishlist(ownerUserId: userId, title: title)
         wishlist.visibility = visibility
+        let existing = try await Wishlist.query(on: req.db).filter(\.$owner.$id == userId).all()
+        for item in existing {
+            item.position += 1
+            try await item.save(on: req.db)
+        }
         try await wishlist.save(on: req.db)
         return wishlist
+    }
+
+    func reorder(req: Request) async throws -> HTTPStatus {
+        let userID = try req.auth.require(User.self).requireID()
+        let body = try req.content.decode(ReorderRequest.self)
+        let wishlists = try await Wishlist.query(on: req.db).filter(\.$owner.$id == userID).all()
+        let existingIDs = Set(try wishlists.map { try $0.requireID() })
+        guard body.ids.count == existingIDs.count, Set(body.ids) == existingIDs else {
+            throw Abort(.badRequest, reason: "The order must include each wishlist exactly once.")
+        }
+        let byID = Dictionary(uniqueKeysWithValues: try wishlists.map { (try $0.requireID(), $0) })
+        for (position, id) in body.ids.enumerated() {
+            guard let wishlist = byID[id] else { continue }
+            wishlist.position = position
+            try await wishlist.save(on: req.db)
+        }
+        return .noContent
     }
 
     // PATCH /wishlists/:wishlistID

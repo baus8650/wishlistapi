@@ -51,8 +51,9 @@ struct NetworkController: RouteCollection {
         }
 
         return result.values.sorted {
-            let ownerOrder = ($0.owner.displayName ?? $0.owner.username).localizedCaseInsensitiveCompare($1.owner.displayName ?? $1.owner.username)
-            return ownerOrder == .orderedSame ? $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending : ownerOrder == .orderedAscending
+            let titleOrder = $0.title.localizedCaseInsensitiveCompare($1.title)
+            if titleOrder != .orderedSame { return titleOrder == .orderedAscending }
+            return ($0.owner.displayName ?? $0.owner.username).localizedCaseInsensitiveCompare($1.owner.displayName ?? $1.owner.username) == .orderedAscending
         }
     }
 }
