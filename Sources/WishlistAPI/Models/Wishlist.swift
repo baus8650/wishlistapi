@@ -29,6 +29,21 @@ final class Wishlist: Model, Content {
     @Field(key: "collaboration_mode")
     var collaborationMode: String
 
+    @OptionalField(key: "occasion_date")
+    var occasionDate: Date?
+
+    @Field(key: "reminder_enabled")
+    var reminderEnabled: Bool
+
+    @OptionalField(key: "icon")
+    var icon: String?
+
+    @OptionalField(key: "color_theme")
+    var colorTheme: String?
+
+    @Field(key: "is_archived")
+    var isArchived: Bool
+
     // MARK: Wishlist Settings
 
     @Field(key: "show_purchaser_names")
@@ -67,6 +82,8 @@ final class Wishlist: Model, Content {
         self.visibility = visibility
         self.position = 0
         self.collaborationMode = "our_wishlist"
+        self.reminderEnabled = false
+        self.isArchived = false
         self.showPurchaserNames = showPurchaserNames
         self.allowMultiplePurchases = allowMultiplePurchases
         self.allowNotes = allowNotes

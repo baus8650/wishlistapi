@@ -34,6 +34,9 @@ final class User: Model {
     @OptionalField(key: "avatar_content_type")
     var avatarContentType: String?
 
+    @Field(key: "has_lifetime_pro")
+    var hasLifetimePro: Bool
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 
@@ -50,6 +53,7 @@ final class User: Model {
         self.displayNameSearch = displayName?.lowercased()
         self.isDiscoverable = false
         self.friendRequestPolicy = "everyone"
+        self.hasLifetimePro = false
     }
 }
 
@@ -63,6 +67,7 @@ extension User {
         let isDiscoverable: Bool
         let friendRequestPolicy: String
         let hasAvatar: Bool
+        let isPro: Bool
         let createdAt: Date?
         let updatedAt: Date?
     }
@@ -76,6 +81,7 @@ extension User {
             isDiscoverable: self.isDiscoverable,
             friendRequestPolicy: self.friendRequestPolicy,
             hasAvatar: self.avatarData != nil,
+            isPro: self.hasLifetimePro,
             createdAt: self.createdAt,
             updatedAt: self.updatedAt
         )

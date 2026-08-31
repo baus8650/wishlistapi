@@ -17,6 +17,11 @@ struct WishlistController: RouteCollection {
         let collaborationMode: String
         let isPrimaryOwner: Bool
         let isCollaborative: Bool
+        let occasionDate: Date?
+        let reminderEnabled: Bool
+        let icon: String?
+        let colorTheme: String?
+        let isArchived: Bool
     }
 
     struct CreateRequest: Content {
@@ -39,6 +44,11 @@ struct WishlistController: RouteCollection {
         let allowMultiplePurchases: Bool
         let allowNotes: Bool
         let autoLockOnPurchase: Bool
+        let occasionDate: Date?
+        let reminderEnabled: Bool
+        let icon: String?
+        let colorTheme: String?
+        let isArchived: Bool
     }
 
     struct UpdateSettingsRequest: Content {
@@ -47,6 +57,12 @@ struct WishlistController: RouteCollection {
         let allowMultiplePurchases: Bool?
         let allowNotes: Bool?
         let autoLockOnPurchase: Bool?
+        let occasionDate: Date?
+        let clearOccasionDate: Bool?
+        let reminderEnabled: Bool?
+        let icon: String?
+        let colorTheme: String?
+        let isArchived: Bool?
     }
 
     func boot(routes: any RoutesBuilder) throws {
@@ -207,7 +223,12 @@ struct WishlistController: RouteCollection {
             showPurchaserNames: wishlist.showPurchaserNames,
             allowMultiplePurchases: wishlist.allowMultiplePurchases,
             allowNotes: wishlist.allowNotes,
-            autoLockOnPurchase: wishlist.autoLockOnPurchase
+            autoLockOnPurchase: wishlist.autoLockOnPurchase,
+            occasionDate: wishlist.occasionDate,
+            reminderEnabled: wishlist.reminderEnabled,
+            icon: wishlist.icon,
+            colorTheme: wishlist.colorTheme,
+            isArchived: wishlist.isArchived
         )
     }
 
@@ -232,6 +253,12 @@ struct WishlistController: RouteCollection {
         if let v = body.allowMultiplePurchases { wishlist.allowMultiplePurchases = v }
         if let v = body.allowNotes { wishlist.allowNotes = v }
         if let v = body.autoLockOnPurchase { wishlist.autoLockOnPurchase = v }
+        if body.clearOccasionDate == true { wishlist.occasionDate = nil }
+        else if let date = body.occasionDate { wishlist.occasionDate = date }
+        if let value = body.reminderEnabled { wishlist.reminderEnabled = value }
+        if let value = body.icon { wishlist.icon = value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }
+        if let value = body.colorTheme { wishlist.colorTheme = value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }
+        if let value = body.isArchived { wishlist.isArchived = value }
         if let visibility = body.visibility {
             guard ["private", "public"].contains(visibility) else {
                 throw Abort(.badRequest, reason: "Visibility must be private or public.")
@@ -249,7 +276,12 @@ struct WishlistController: RouteCollection {
             showPurchaserNames: wishlist.showPurchaserNames,
             allowMultiplePurchases: wishlist.allowMultiplePurchases,
             allowNotes: wishlist.allowNotes,
-            autoLockOnPurchase: wishlist.autoLockOnPurchase
+            autoLockOnPurchase: wishlist.autoLockOnPurchase,
+            occasionDate: wishlist.occasionDate,
+            reminderEnabled: wishlist.reminderEnabled,
+            icon: wishlist.icon,
+            colorTheme: wishlist.colorTheme,
+            isArchived: wishlist.isArchived
         )
     }
 
@@ -271,6 +303,12 @@ struct WishlistController: RouteCollection {
     private func summary(_ wishlist: Wishlist, for userID: UUID, isCollaborative: Bool) throws -> Summary {
         .init(id: try wishlist.requireID(), title: wishlist.title, visibility: wishlist.visibility,
               collaborationMode: wishlist.collaborationMode, isPrimaryOwner: wishlist.$owner.id == userID,
-              isCollaborative: isCollaborative)
+              isCollaborative: isCollaborative, occasionDate: wishlist.occasionDate,
+              reminderEnabled: wishlist.reminderEnabled, icon: wishlist.icon,
+              colorTheme: wishlist.colorTheme, isArchived: wishlist.isArchived)
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

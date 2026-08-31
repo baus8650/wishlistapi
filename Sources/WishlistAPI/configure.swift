@@ -102,6 +102,8 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddSharedListNotifications())
     app.migrations.add(CreateWishlistItemImages())
     app.migrations.add(CreateWebMetrics())
+    app.migrations.add(AddWishlistProFeatures())
+    app.migrations.add(GrandfatherExistingUsersIntoPro())
 
     // MARK: Routes
     try routes(app)
