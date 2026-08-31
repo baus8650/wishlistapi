@@ -53,8 +53,6 @@ final class Wishlist: Model, Content {
     @OptionalField(key: "reminder_date")
     var reminderDate: Date?
 
-    @Field(key: "show_insights")
-    var showInsights: Bool
 
     // MARK: Wishlist Settings
 
@@ -96,7 +94,6 @@ final class Wishlist: Model, Content {
         self.collaborationMode = "our_wishlist"
         self.reminderEnabled = false
         self.isArchived = false
-        self.showInsights = true
         self.showPurchaserNames = showPurchaserNames
         self.allowMultiplePurchases = allowMultiplePurchases
         self.allowNotes = allowNotes
