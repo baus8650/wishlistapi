@@ -1,4 +1,5 @@
 import Fluent
+import Foundation
 
 final class WebMetricEvent: Model, @unchecked Sendable {
     static let schema = "web_metric_events"

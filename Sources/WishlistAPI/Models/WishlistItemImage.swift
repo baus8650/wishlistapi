@@ -1,4 +1,5 @@
 import Fluent
+import Foundation
 
 final class WishlistItemImage: Model, @unchecked Sendable {
     static let schema = "wishlist_item_images"
