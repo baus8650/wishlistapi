@@ -22,6 +22,9 @@ struct WishlistController: RouteCollection {
         let icon: String?
         let colorTheme: String?
         let isArchived: Bool
+        let description: String?
+        let customColorHex: String?
+        let reminderOffsets: [Int]
     }
 
     struct CreateRequest: Content {
@@ -49,6 +52,9 @@ struct WishlistController: RouteCollection {
         let icon: String?
         let colorTheme: String?
         let isArchived: Bool
+        let description: String?
+        let customColorHex: String?
+        let reminderOffsets: [Int]
     }
 
     struct UpdateSettingsRequest: Content {
@@ -63,6 +69,11 @@ struct WishlistController: RouteCollection {
         let icon: String?
         let colorTheme: String?
         let isArchived: Bool?
+        let description: String?
+        let clearDescription: Bool?
+        let customColorHex: String?
+        let clearCustomColor: Bool?
+        let reminderOffsets: [Int]?
     }
 
     func boot(routes: any RoutesBuilder) throws {
@@ -73,6 +84,7 @@ struct WishlistController: RouteCollection {
         routes.patch(":wishlistID", use: update)
         routes.get(":wishlistID", "settings", use: getSettings)
         routes.patch(":wishlistID", "settings", use: updateSettings)
+        routes.post(":wishlistID", "duplicate", use: duplicate)
         routes.delete(":wishlistID", use: delete)
     }
 
@@ -229,6 +241,8 @@ struct WishlistController: RouteCollection {
             icon: wishlist.icon,
             colorTheme: wishlist.colorTheme,
             isArchived: wishlist.isArchived
+            , description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
+            reminderOffsets: wishlist.reminderOffsets
         )
     }
 
@@ -259,6 +273,20 @@ struct WishlistController: RouteCollection {
         if let value = body.icon { wishlist.icon = value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }
         if let value = body.colorTheme { wishlist.colorTheme = value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }
         if let value = body.isArchived { wishlist.isArchived = value }
+        if body.clearDescription == true { wishlist.descriptionText = nil }
+        else if let value = body.description { wishlist.descriptionText = value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }
+        if body.clearCustomColor == true { wishlist.customColorHex = nil }
+        else if let value = body.customColorHex {
+            let normalized = value.trimmingCharacters(in: CharacterSet(charactersIn: "#")).uppercased()
+            guard normalized.range(of: "^[0-9A-F]{6}$", options: .regularExpression) != nil else {
+                throw Abort(.badRequest, reason: "Custom color must be a six-digit hex color.")
+            }
+            wishlist.customColorHex = normalized
+        }
+        if let offsets = body.reminderOffsets {
+            guard offsets.allSatisfy({ (0...365).contains($0) }) else { throw Abort(.badRequest, reason: "Reminder offsets must be between 0 and 365 days.") }
+            wishlist.reminderOffsets = Array(Set(offsets)).sorted(by: >)
+        }
         if let visibility = body.visibility {
             guard ["private", "public"].contains(visibility) else {
                 throw Abort(.badRequest, reason: "Visibility must be private or public.")
@@ -282,7 +310,36 @@ struct WishlistController: RouteCollection {
             icon: wishlist.icon,
             colorTheme: wishlist.colorTheme,
             isArchived: wishlist.isArchived
+            , description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
+            reminderOffsets: wishlist.reminderOffsets
         )
+    }
+
+    func duplicate(req: Request) async throws -> Summary {
+        let userID = try req.auth.require(User.self).requireID()
+        guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
+              let source = try await Wishlist.query(on: req.db).filter(\.$id == wishlistID).filter(\.$owner.$id == userID).first()
+        else { throw Abort(.notFound) }
+
+        let copy = Wishlist(ownerUserId: userID, title: "\(source.title) Copy", visibility: source.visibility)
+        copy.descriptionText = source.descriptionText
+        copy.icon = source.icon
+        copy.colorTheme = source.colorTheme
+        copy.customColorHex = source.customColorHex
+        copy.collaborationMode = source.collaborationMode
+        try await copy.save(on: req.db)
+
+        let memberships = try await WishlistItemMembership.query(on: req.db)
+            .filter(\.$wishlist.$id == wishlistID).sort(\.$position, .ascending).with(\.$item).all()
+        for (position, membership) in memberships.enumerated() {
+            let sourceItem = membership.item
+            let item = WishlistItem(wishlistId: try copy.requireID(), title: sourceItem.title, url: sourceItem.url,
+                                    price: sourceItem.price, ownerNote: sourceItem.ownerNote, quantity: sourceItem.quantity)
+            try await item.save(on: req.db)
+            let link = WishlistItemMembership(itemID: try item.requireID(), wishlistID: try copy.requireID(), position: position)
+            try await link.save(on: req.db)
+        }
+        return try summary(copy, for: userID, isCollaborative: false)
     }
 
     private func revokePublicAccess(wishlistID: UUID, on db: any Database) async throws {
@@ -305,7 +362,9 @@ struct WishlistController: RouteCollection {
               collaborationMode: wishlist.collaborationMode, isPrimaryOwner: wishlist.$owner.id == userID,
               isCollaborative: isCollaborative, occasionDate: wishlist.occasionDate,
               reminderEnabled: wishlist.reminderEnabled, icon: wishlist.icon,
-              colorTheme: wishlist.colorTheme, isArchived: wishlist.isArchived)
+              colorTheme: wishlist.colorTheme, isArchived: wishlist.isArchived,
+              description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
+              reminderOffsets: wishlist.reminderOffsets)
     }
 }
 

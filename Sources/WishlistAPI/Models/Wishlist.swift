@@ -44,6 +44,15 @@ final class Wishlist: Model, Content {
     @Field(key: "is_archived")
     var isArchived: Bool
 
+    @OptionalField(key: "description")
+    var descriptionText: String?
+
+    @OptionalField(key: "custom_color_hex")
+    var customColorHex: String?
+
+    @Field(key: "reminder_offsets")
+    var reminderOffsets: [Int]
+
     // MARK: Wishlist Settings
 
     @Field(key: "show_purchaser_names")
@@ -84,6 +93,7 @@ final class Wishlist: Model, Content {
         self.collaborationMode = "our_wishlist"
         self.reminderEnabled = false
         self.isArchived = false
+        self.reminderOffsets = []
         self.showPurchaserNames = showPurchaserNames
         self.allowMultiplePurchases = allowMultiplePurchases
         self.allowNotes = allowNotes

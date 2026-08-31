@@ -105,6 +105,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddWishlistProFeatures())
     app.migrations.add(GrandfatherExistingUsersIntoPro())
     app.migrations.add(RevokeGrandfatheredProForPurchaseTesting())
+    app.migrations.add(AddWishlistProductivityTools())
 
     // MARK: Routes
     try routes(app)

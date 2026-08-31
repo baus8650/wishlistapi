@@ -9,8 +9,17 @@ struct AccountShareController: RouteCollection {
         let sharedByName: String
         let notificationsEnabled: Bool
         let removable: Bool
+        let recipientDueDate: Date?
+        let recipientReminderEnabled: Bool
+        let recipientReminderOffsets: [Int]
     }
-    struct SettingsRequest: Content { let notificationsEnabled: Bool }
+    struct SettingsRequest: Content {
+        let notificationsEnabled: Bool?
+        let recipientDueDate: Date?
+        let clearRecipientDueDate: Bool?
+        let recipientReminderEnabled: Bool?
+        let recipientReminderOffsets: [Int]?
+    }
 
     private let recipient = RecipientShareController()
 
@@ -130,7 +139,15 @@ struct AccountShareController: RouteCollection {
         guard let shareID = req.parameters.get("accountShareID", as: UUID.self),
               let viewer = try await WishlistViewer.query(on: req.db).filter(\.$id == shareID).filter(\.$user.$id == userID)
                 .with(\.$wishlist) { $0.with(\.$owner) }.first() else { throw Abort(.notFound) }
-        viewer.notificationsEnabled = try req.content.decode(SettingsRequest.self).notificationsEnabled
+        let body = try req.content.decode(SettingsRequest.self)
+        if let value = body.notificationsEnabled { viewer.notificationsEnabled = value }
+        if body.clearRecipientDueDate == true { viewer.recipientDueDate = nil }
+        else if let value = body.recipientDueDate { viewer.recipientDueDate = value }
+        if let value = body.recipientReminderEnabled { viewer.recipientReminderEnabled = value }
+        if let offsets = body.recipientReminderOffsets {
+            guard offsets.allSatisfy({ (0...365).contains($0) }) else { throw Abort(.badRequest, reason: "Reminder offsets must be between 0 and 365 days.") }
+            viewer.recipientReminderOffsets = Array(Set(offsets)).sorted(by: >)
+        }
         try await viewer.save(on: req.db)
         let removable = try await SocialWishlistAccess.query(on: req.db).filter(\.$viewer.$id == shareID).first() == nil
         return try savedShare(viewer: viewer, wishlist: viewer.wishlist, owner: viewer.wishlist.owner, removable: removable)
@@ -145,7 +162,10 @@ struct AccountShareController: RouteCollection {
             title: wishlist.title,
             sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName,
             notificationsEnabled: viewer.notificationsEnabled,
-            removable: removable
+            removable: removable,
+            recipientDueDate: viewer.recipientDueDate,
+            recipientReminderEnabled: viewer.recipientReminderEnabled,
+            recipientReminderOffsets: viewer.recipientReminderOffsets
         )
     }
 }

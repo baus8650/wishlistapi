@@ -120,6 +120,9 @@ struct FriendProfileController: RouteCollection {
         let fallbackName = owner.email.split(separator: "@", maxSplits: 1).first.map(String.init) ?? "Someone"
         return .init(id: try viewer.requireID(), wishlistID: try wishlist.requireID(), title: wishlist.title,
                      sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName,
-                     notificationsEnabled: viewer.notificationsEnabled, removable: false)
+                     notificationsEnabled: viewer.notificationsEnabled, removable: false,
+                     recipientDueDate: viewer.recipientDueDate,
+                     recipientReminderEnabled: viewer.recipientReminderEnabled,
+                     recipientReminderOffsets: viewer.recipientReminderOffsets)
     }
 }
