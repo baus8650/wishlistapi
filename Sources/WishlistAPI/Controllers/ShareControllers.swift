@@ -119,11 +119,12 @@ struct RecipientShareController: RouteCollection {
             sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName
         )
 
-        let items = try await WishlistItem.query(on: req.db)
+        let items = try await WishlistItemMembership.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistId)
             .sort(\.$position, .ascending)
-            .sort(\.$createdAt, .ascending)
+            .with(\.$item)
             .all()
+            .map(\.item)
 
         // Viewer token comes from header if they already have it
         let headerToken = req.headers.first(name: "X-Viewer-Token")
@@ -162,11 +163,12 @@ struct RecipientShareController: RouteCollection {
         let wishlistId = try wishlist.requireID()
         let viewerId = try viewer.requireID()
 
-        let items = try await WishlistItem.query(on: req.db)
+        let items = try await WishlistItemMembership.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistId)
             .sort(\.$position, .ascending)
-            .sort(\.$createdAt, .ascending)
+            .with(\.$item)
             .all()
+            .map(\.item)
 
         let itemIds: [UUID] = items.compactMap { $0.id }
         if itemIds.isEmpty { return [] }
@@ -190,6 +192,9 @@ struct RecipientShareController: RouteCollection {
                 return (id, name)
             }
         )
+        let viewerWishlistByID = Dictionary(uniqueKeysWithValues: viewers.compactMap { viewer in
+            viewer.id.map { ($0, viewer.$wishlist.id) }
+        })
 
         // Group states by item
         var statesByItem: [UUID: [ItemViewerState]] = [:]
@@ -218,6 +223,7 @@ struct RecipientShareController: RouteCollection {
             let notes: [RecipientNote]
             if wishlist.allowNotes {
                 notes = itemStates.compactMap { s in
+                    guard viewerWishlistByID[s.$viewer.id] == wishlistId else { return nil }
                     let raw = (s.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !raw.isEmpty else { return nil }
 
@@ -284,10 +290,11 @@ struct RecipientShareController: RouteCollection {
         }
 
         // Ensure item belongs to wishlist
-        guard let item = try await WishlistItem.query(on: req.db)
-            .filter(\.$id == itemID)
+        guard try await WishlistItemMembership.query(on: req.db)
+            .filter(\.$item.$id == itemID)
             .filter(\.$wishlist.$id == wishlistId)
-            .first()
+            .first() != nil,
+              let item = try await WishlistItem.find(itemID, on: req.db)
         else { throw Abort(.notFound) }
 
         let state = try await ItemViewerState.query(on: req.db)

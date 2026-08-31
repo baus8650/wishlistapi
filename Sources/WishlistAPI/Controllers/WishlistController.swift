@@ -151,6 +151,18 @@ struct WishlistController: RouteCollection {
             throw Abort(.notFound)
         }
 
+        // Preserve canonical items that are also linked to another wishlist.
+        let primaryItems = try await WishlistItem.query(on: req.db).filter(\.$wishlist.$id == wishlistID).all()
+        for item in primaryItems {
+            let itemID = try item.requireID()
+            if let replacement = try await WishlistItemMembership.query(on: req.db)
+                .filter(\.$item.$id == itemID)
+                .filter(\.$wishlist.$id != wishlistID)
+                .first() {
+                item.$wishlist.id = replacement.$wishlist.id
+                try await item.save(on: req.db)
+            }
+        }
         try await wishlist.delete(on: req.db)
         return .noContent
     }

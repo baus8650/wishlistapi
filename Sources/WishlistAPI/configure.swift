@@ -96,6 +96,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreatePublicWishlistAccess())
     app.migrations.add(CreateUserPins())
     app.migrations.add(AddWishlistOrdering())
+    app.migrations.add(CreateWishlistItemMemberships())
 
     // MARK: Routes
     try routes(app)

@@ -16,6 +16,7 @@ struct WishlistItemController: RouteCollection {
         let price: Double?
         let ownerNote: String?
         let quantity: Int?
+        let linkedWishlistIDs: [UUID]?
     }
 
     struct UpdateRequest: Content {
@@ -24,15 +25,18 @@ struct WishlistItemController: RouteCollection {
         let price: Double?
         let ownerNote: String?
         let quantity: Int?
+        let linkedWishlistIDs: [UUID]?
     }
 
     struct ReorderRequest: Content { let ids: [UUID] }
+    struct LinksResponse: Content { let wishlistIDs: [UUID] }
 
     func boot(routes: any RoutesBuilder) throws {
         // Owner-only endpoints (mounted under /wishlists)
         routes.get(":wishlistID", "items", use: listForWishlist)
         routes.post(":wishlistID", "items", use: createForWishlist)
         routes.put(":wishlistID", "items", "order", use: reorder)
+        routes.get(":wishlistID", "items", ":itemID", "links", use: links)
 
         // Item-level endpoints under /wishlists
         routes.put(":wishlistID", "items", ":itemID", use: replace)
@@ -52,7 +56,7 @@ struct WishlistItemController: RouteCollection {
         }
 
         guard let item = try await WishlistItem.find(itemID, on: req.db),
-              item.$wishlist.id == wishlistID else {
+              try await membership(itemID: itemID, wishlistID: wishlistID, on: req.db) != nil else {
             throw Abort(.notFound)
         }
 
@@ -75,6 +79,9 @@ struct WishlistItemController: RouteCollection {
         item.ownerNote = body.ownerNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         item.quantity = body.quantity ?? 1
         try await item.save(on: req.db)
+        if let linked = body.linkedWishlistIDs {
+            try await syncMemberships(item: item, ownerID: userId, requestedIDs: Set(linked + [wishlistID]), on: req.db)
+        }
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item changed in “\(wishlist.title)”.", on: req.db)
         return item
     }
@@ -96,11 +103,12 @@ struct WishlistItemController: RouteCollection {
 
         guard ownsWishlist else { throw Abort(.notFound) }
 
-        return try await WishlistItem.query(on: req.db)
+        return try await WishlistItemMembership.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistID)
             .sort(\.$position, .ascending)
-            .sort(\.$createdAt, .ascending)
+            .with(\.$item)
             .all()
+            .map(\.item)
     }
 
     // POST /wishlists/:wishlistID/items
@@ -136,12 +144,8 @@ struct WishlistItemController: RouteCollection {
             ownerNote: body.ownerNote,
             quantity: body.quantity ?? 1
         )
-        let existing = try await WishlistItem.query(on: req.db).filter(\.$wishlist.$id == wishlistID).all()
-        for current in existing {
-            current.position += 1
-            try await current.save(on: req.db)
-        }
         try await item.save(on: req.db)
+        try await syncMemberships(item: item, ownerID: userId, requestedIDs: Set((body.linkedWishlistIDs ?? []) + [wishlistID]), on: req.db)
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "New wishlist item", message: "A new item was added to “\(wishlist.title)”.", on: req.db)
         return item
     }
@@ -153,18 +157,28 @@ struct WishlistItemController: RouteCollection {
             throw Abort(.notFound)
         }
         let body = try req.content.decode(ReorderRequest.self)
-        let items = try await WishlistItem.query(on: req.db).filter(\.$wishlist.$id == wishlistID).all()
-        let existingIDs = Set(try items.map { try $0.requireID() })
+        let memberships = try await WishlistItemMembership.query(on: req.db).filter(\.$wishlist.$id == wishlistID).all()
+        let existingIDs = Set(memberships.map(\.$item.id))
         guard body.ids.count == existingIDs.count, Set(body.ids) == existingIDs else {
             throw Abort(.badRequest, reason: "The order must include each item exactly once.")
         }
-        let byID = Dictionary(uniqueKeysWithValues: try items.map { (try $0.requireID(), $0) })
+        let byID = Dictionary(uniqueKeysWithValues: memberships.map { ($0.$item.id, $0) })
         for (position, id) in body.ids.enumerated() {
-            guard let item = byID[id] else { continue }
-            item.position = position
-            try await item.save(on: req.db)
+            guard let membership = byID[id] else { continue }
+            membership.position = position
+            try await membership.save(on: req.db)
         }
         return .noContent
+    }
+
+    func links(req: Request) async throws -> LinksResponse {
+        let userID = try req.auth.require(User.self).requireID()
+        guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
+              let itemID = req.parameters.get("itemID", as: UUID.self),
+              try await Wishlist.query(on: req.db).filter(\.$id == wishlistID).filter(\.$owner.$id == userID).first() != nil,
+              try await membership(itemID: itemID, wishlistID: wishlistID, on: req.db) != nil else { throw Abort(.notFound) }
+        let memberships = try await WishlistItemMembership.query(on: req.db).filter(\.$item.$id == itemID).all()
+        return .init(wishlistIDs: memberships.map(\.$wishlist.id))
     }
 
     // PATCH /wishlists/:wishlistID/items/:itemID
@@ -185,7 +199,7 @@ struct WishlistItemController: RouteCollection {
         }
 
         // Ensure item belongs to the wishlist in the route
-        guard item.$wishlist.id == wishlistID else { throw Abort(.notFound) }
+        guard try await membership(itemID: itemID, wishlistID: wishlistID, on: req.db) != nil else { throw Abort(.notFound) }
 
         // Ownership check via parent wishlist
         let wishlist = try await item.$wishlist.get(on: req.db)
@@ -210,6 +224,9 @@ struct WishlistItemController: RouteCollection {
         }
 
         try await item.save(on: req.db)
+        if let linked = body.linkedWishlistIDs {
+            try await syncMemberships(item: item, ownerID: userId, requestedIDs: Set(linked + [wishlistID]), on: req.db)
+        }
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item changed in “\(wishlist.title)”.", on: req.db)
         return item
     }
@@ -232,14 +249,47 @@ struct WishlistItemController: RouteCollection {
         }
 
         // Ensure item belongs to the wishlist in the route
-        guard item.$wishlist.id == wishlistID else { throw Abort(.notFound) }
+        guard let currentMembership = try await membership(itemID: itemID, wishlistID: wishlistID, on: req.db) else { throw Abort(.notFound) }
 
         let wishlist = try await item.$wishlist.get(on: req.db)
         guard wishlist.$owner.id == userId else { throw Abort(.notFound) }
 
-        try await item.delete(on: req.db)
+        let allMemberships = try await WishlistItemMembership.query(on: req.db).filter(\.$item.$id == itemID).all()
+        if allMemberships.count > 1 {
+            if item.$wishlist.id == wishlistID, let replacement = allMemberships.first(where: { $0.$wishlist.id != wishlistID }) {
+                item.$wishlist.id = replacement.$wishlist.id
+                try await item.save(on: req.db)
+            }
+            try await currentMembership.delete(on: req.db)
+        } else {
+            try await item.delete(on: req.db)
+        }
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item was removed from “\(wishlist.title)”.", on: req.db)
         return .noContent
+    }
+
+    private func membership(itemID: UUID, wishlistID: UUID, on database: any Database) async throws -> WishlistItemMembership? {
+        try await WishlistItemMembership.query(on: database)
+            .filter(\.$item.$id == itemID)
+            .filter(\.$wishlist.$id == wishlistID)
+            .first()
+    }
+
+    private func syncMemberships(item: WishlistItem, ownerID: UUID, requestedIDs: Set<UUID>, on database: any Database) async throws {
+        let owned = try await Wishlist.query(on: database)
+            .filter(\.$owner.$id == ownerID)
+            .filter(\.$id ~~ Array(requestedIDs))
+            .all()
+        guard owned.count == requestedIDs.count else { throw Abort(.forbidden, reason: "Items can only be linked to your own wishlists.") }
+        let itemID = try item.requireID()
+        let existing = try await WishlistItemMembership.query(on: database).filter(\.$item.$id == itemID).all()
+        let existingIDs = Set(existing.map(\.$wishlist.id))
+        for membership in existing where !requestedIDs.contains(membership.$wishlist.id) { try await membership.delete(on: database) }
+        for wishlistID in requestedIDs.subtracting(existingIDs) {
+            let memberships = try await WishlistItemMembership.query(on: database).filter(\.$wishlist.$id == wishlistID).all()
+            for membership in memberships { membership.position += 1; try await membership.save(on: database) }
+            try await WishlistItemMembership(itemID: itemID, wishlistID: wishlistID, position: 0).save(on: database)
+        }
     }
 }
 
