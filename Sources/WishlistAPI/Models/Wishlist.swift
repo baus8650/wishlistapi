@@ -26,6 +26,9 @@ final class Wishlist: Model, Content {
     @Field(key: "position")
     var position: Int
 
+    @Field(key: "collaboration_mode")
+    var collaborationMode: String
+
     // MARK: Wishlist Settings
 
     @Field(key: "show_purchaser_names")
@@ -63,6 +66,7 @@ final class Wishlist: Model, Content {
         self.title = title
         self.visibility = visibility
         self.position = 0
+        self.collaborationMode = "our_wishlist"
         self.showPurchaserNames = showPurchaserNames
         self.allowMultiplePurchases = allowMultiplePurchases
         self.allowNotes = allowNotes

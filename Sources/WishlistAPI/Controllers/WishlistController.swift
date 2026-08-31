@@ -10,9 +10,18 @@ import Fluent
 
 struct WishlistController: RouteCollection {
 
+    struct Summary: Content {
+        let id: UUID
+        let title: String
+        let visibility: String
+        let collaborationMode: String
+        let isPrimaryOwner: Bool
+    }
+
     struct CreateRequest: Content {
         let title: String
         let visibility: String?
+        let collaborationMode: String?
     }
 
     struct UpdateRequest: Content {
@@ -51,19 +60,24 @@ struct WishlistController: RouteCollection {
     }
 
     // GET /wishlists
-    func index(req: Request) async throws -> [Wishlist] {
+    func index(req: Request) async throws -> [Summary] {
         let user = try req.auth.require(User.self)
         let userId = try user.requireID()
 
+        let collaboratorIDs = try await WishlistCollaborator.query(on: req.db)
+            .filter(\.$user.$id == userId).all().map(\.$wishlist.id)
+        let ownedIDs = try await Wishlist.query(on: req.db)
+            .filter(\.$owner.$id == userId).all().compactMap(\.id)
         return try await Wishlist.query(on: req.db)
-            .filter(\.$owner.$id == userId)
+            .filter(\.$id ~~ Array(Set(ownedIDs + collaboratorIDs)))
             .sort(\.$position, .ascending)
             .sort(\.$createdAt, .descending)
             .all()
+            .map { try summary($0, for: userId) }
     }
 
     // POST /wishlists
-    func create(req: Request) async throws -> Wishlist {
+    func create(req: Request) async throws -> Summary {
         let user = try req.auth.require(User.self)
         let userId = try user.requireID()
         let body = try req.content.decode(CreateRequest.self)
@@ -79,19 +93,25 @@ struct WishlistController: RouteCollection {
         }
         let wishlist = Wishlist(ownerUserId: userId, title: title)
         wishlist.visibility = visibility
+        if let mode = body.collaborationMode {
+            guard ["our_wishlist", "gift_planning"].contains(mode) else { throw Abort(.badRequest, reason: "Invalid collaboration mode.") }
+            wishlist.collaborationMode = mode
+        }
         let existing = try await Wishlist.query(on: req.db).filter(\.$owner.$id == userId).all()
         for item in existing {
             item.position += 1
             try await item.save(on: req.db)
         }
         try await wishlist.save(on: req.db)
-        return wishlist
+        return try summary(wishlist, for: userId)
     }
 
     func reorder(req: Request) async throws -> HTTPStatus {
         let userID = try req.auth.require(User.self).requireID()
         let body = try req.content.decode(ReorderRequest.self)
-        let wishlists = try await Wishlist.query(on: req.db).filter(\.$owner.$id == userID).all()
+        let collaboratorIDs = try await WishlistCollaborator.query(on: req.db).filter(\.$user.$id == userID).all().map(\.$wishlist.id)
+        let ownedIDs = try await Wishlist.query(on: req.db).filter(\.$owner.$id == userID).all().compactMap(\.id)
+        let wishlists = try await Wishlist.query(on: req.db).filter(\.$id ~~ Array(Set(ownedIDs + collaboratorIDs))).all()
         let existingIDs = Set(try wishlists.map { try $0.requireID() })
         guard body.ids.count == existingIDs.count, Set(body.ids) == existingIDs else {
             throw Abort(.badRequest, reason: "The order must include each wishlist exactly once.")
@@ -106,7 +126,7 @@ struct WishlistController: RouteCollection {
     }
 
     // PATCH /wishlists/:wishlistID
-    func update(req: Request) async throws -> Wishlist {
+    func update(req: Request) async throws -> Summary {
         let user = try req.auth.require(User.self)
         let userId = try user.requireID()
         let body = try req.content.decode(UpdateRequest.self)
@@ -115,11 +135,8 @@ struct WishlistController: RouteCollection {
             throw Abort(.badRequest, reason: "Invalid wishlistID.")
         }
 
-        guard let wishlist = try await Wishlist.query(on: req.db)
-            .filter(\.$id == wishlistID)
-            .filter(\.$owner.$id == userId) // ownership enforcement
-            .first()
-        else {
+        guard let wishlist = try await Wishlist.find(wishlistID, on: req.db),
+              try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else {
             throw Abort(.notFound)
         }
 
@@ -131,7 +148,7 @@ struct WishlistController: RouteCollection {
         wishlist.title = title
         try await wishlist.save(on: req.db)
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "A shared wishlist was renamed to “\(title)”.", on: req.db)
-        return wishlist
+        return try summary(wishlist, for: userId)
     }
 
     // DELETE /wishlists/:wishlistID
@@ -176,11 +193,8 @@ struct WishlistController: RouteCollection {
             throw Abort(.badRequest, reason: "Invalid wishlistID.")
         }
 
-        guard let wishlist = try await Wishlist.query(on: req.db)
-            .filter(\.$id == wishlistID)
-            .filter(\.$owner.$id == userId)
-            .first()
-        else { throw Abort(.notFound) }
+        guard let wishlist = try await Wishlist.find(wishlistID, on: req.db),
+              try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
 
         return .init(
             visibility: wishlist.visibility,
@@ -246,5 +260,10 @@ struct WishlistController: RouteCollection {
                 try await viewer.delete(on: db)
             }
         }
+    }
+
+    private func summary(_ wishlist: Wishlist, for userID: UUID) throws -> Summary {
+        .init(id: try wishlist.requireID(), title: wishlist.title, visibility: wishlist.visibility,
+              collaborationMode: wishlist.collaborationMode, isPrimaryOwner: wishlist.$owner.id == userID)
     }
 }
