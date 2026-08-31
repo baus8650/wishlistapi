@@ -37,8 +37,8 @@ final class WishlistViewer: Model, Content {
     @Field(key: "recipient_reminder_enabled")
     var recipientReminderEnabled: Bool
 
-    @Field(key: "recipient_reminder_offsets")
-    var recipientReminderOffsets: [Int]
+    @OptionalField(key: "recipient_reminder_date")
+    var recipientReminderDate: Date?
 
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
@@ -61,7 +61,6 @@ final class WishlistViewer: Model, Content {
         self.displayName = displayName
         self.notificationsEnabled = true
         self.recipientReminderEnabled = false
-        self.recipientReminderOffsets = []
         if let userId { self.$user.id = userId }
     }
 }

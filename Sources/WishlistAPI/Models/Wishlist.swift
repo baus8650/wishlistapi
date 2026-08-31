@@ -50,8 +50,8 @@ final class Wishlist: Model, Content {
     @OptionalField(key: "custom_color_hex")
     var customColorHex: String?
 
-    @Field(key: "reminder_offsets")
-    var reminderOffsets: [Int]
+    @OptionalField(key: "reminder_date")
+    var reminderDate: Date?
 
     // MARK: Wishlist Settings
 
@@ -93,7 +93,6 @@ final class Wishlist: Model, Content {
         self.collaborationMode = "our_wishlist"
         self.reminderEnabled = false
         self.isArchived = false
-        self.reminderOffsets = []
         self.showPurchaserNames = showPurchaserNames
         self.allowMultiplePurchases = allowMultiplePurchases
         self.allowNotes = allowNotes

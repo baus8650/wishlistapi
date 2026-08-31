@@ -123,6 +123,6 @@ struct FriendProfileController: RouteCollection {
                      notificationsEnabled: viewer.notificationsEnabled, removable: false,
                      recipientDueDate: viewer.recipientDueDate,
                      recipientReminderEnabled: viewer.recipientReminderEnabled,
-                     recipientReminderOffsets: viewer.recipientReminderOffsets)
+                     recipientReminderDate: viewer.recipientReminderDate)
     }
 }

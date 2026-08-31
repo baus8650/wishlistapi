@@ -24,7 +24,7 @@ struct WishlistController: RouteCollection {
         let isArchived: Bool
         let description: String?
         let customColorHex: String?
-        let reminderOffsets: [Int]
+        let reminderDate: Date?
     }
 
     struct CreateRequest: Content {
@@ -54,7 +54,7 @@ struct WishlistController: RouteCollection {
         let isArchived: Bool
         let description: String?
         let customColorHex: String?
-        let reminderOffsets: [Int]
+        let reminderDate: Date?
     }
 
     struct UpdateSettingsRequest: Content {
@@ -73,7 +73,8 @@ struct WishlistController: RouteCollection {
         let clearDescription: Bool?
         let customColorHex: String?
         let clearCustomColor: Bool?
-        let reminderOffsets: [Int]?
+        let reminderDate: Date?
+        let clearReminderDate: Bool?
     }
 
     func boot(routes: any RoutesBuilder) throws {
@@ -242,7 +243,7 @@ struct WishlistController: RouteCollection {
             colorTheme: wishlist.colorTheme,
             isArchived: wishlist.isArchived
             , description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
-            reminderOffsets: wishlist.reminderOffsets
+            reminderDate: wishlist.reminderDate
         )
     }
 
@@ -283,10 +284,8 @@ struct WishlistController: RouteCollection {
             }
             wishlist.customColorHex = normalized
         }
-        if let offsets = body.reminderOffsets {
-            guard offsets.allSatisfy({ (0...365).contains($0) }) else { throw Abort(.badRequest, reason: "Reminder offsets must be between 0 and 365 days.") }
-            wishlist.reminderOffsets = Array(Set(offsets)).sorted(by: >)
-        }
+        if body.clearReminderDate == true { wishlist.reminderDate = nil }
+        else if let date = body.reminderDate { wishlist.reminderDate = date }
         if let visibility = body.visibility {
             guard ["private", "public"].contains(visibility) else {
                 throw Abort(.badRequest, reason: "Visibility must be private or public.")
@@ -311,7 +310,7 @@ struct WishlistController: RouteCollection {
             colorTheme: wishlist.colorTheme,
             isArchived: wishlist.isArchived
             , description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
-            reminderOffsets: wishlist.reminderOffsets
+            reminderDate: wishlist.reminderDate
         )
     }
 
@@ -364,7 +363,7 @@ struct WishlistController: RouteCollection {
               reminderEnabled: wishlist.reminderEnabled, icon: wishlist.icon,
               colorTheme: wishlist.colorTheme, isArchived: wishlist.isArchived,
               description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
-              reminderOffsets: wishlist.reminderOffsets)
+              reminderDate: wishlist.reminderDate)
     }
 }
 

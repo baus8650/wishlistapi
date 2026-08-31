@@ -11,14 +11,15 @@ struct AccountShareController: RouteCollection {
         let removable: Bool
         let recipientDueDate: Date?
         let recipientReminderEnabled: Bool
-        let recipientReminderOffsets: [Int]
+        let recipientReminderDate: Date?
     }
     struct SettingsRequest: Content {
         let notificationsEnabled: Bool?
         let recipientDueDate: Date?
         let clearRecipientDueDate: Bool?
         let recipientReminderEnabled: Bool?
-        let recipientReminderOffsets: [Int]?
+        let recipientReminderDate: Date?
+        let clearRecipientReminderDate: Bool?
     }
 
     private let recipient = RecipientShareController()
@@ -144,10 +145,8 @@ struct AccountShareController: RouteCollection {
         if body.clearRecipientDueDate == true { viewer.recipientDueDate = nil }
         else if let value = body.recipientDueDate { viewer.recipientDueDate = value }
         if let value = body.recipientReminderEnabled { viewer.recipientReminderEnabled = value }
-        if let offsets = body.recipientReminderOffsets {
-            guard offsets.allSatisfy({ (0...365).contains($0) }) else { throw Abort(.badRequest, reason: "Reminder offsets must be between 0 and 365 days.") }
-            viewer.recipientReminderOffsets = Array(Set(offsets)).sorted(by: >)
-        }
+        if body.clearRecipientReminderDate == true { viewer.recipientReminderDate = nil }
+        else if let date = body.recipientReminderDate { viewer.recipientReminderDate = date }
         try await viewer.save(on: req.db)
         let removable = try await SocialWishlistAccess.query(on: req.db).filter(\.$viewer.$id == shareID).first() == nil
         return try savedShare(viewer: viewer, wishlist: viewer.wishlist, owner: viewer.wishlist.owner, removable: removable)
@@ -165,7 +164,7 @@ struct AccountShareController: RouteCollection {
             removable: removable,
             recipientDueDate: viewer.recipientDueDate,
             recipientReminderEnabled: viewer.recipientReminderEnabled,
-            recipientReminderOffsets: viewer.recipientReminderOffsets
+            recipientReminderDate: viewer.recipientReminderDate
         )
     }
 }
