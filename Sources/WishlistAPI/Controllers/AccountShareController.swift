@@ -7,7 +7,10 @@ struct AccountShareController: RouteCollection {
         let wishlistID: UUID
         let title: String
         let sharedByName: String
+        let notificationsEnabled: Bool
+        let removable: Bool
     }
+    struct SettingsRequest: Content { let notificationsEnabled: Bool }
 
     private let recipient = RecipientShareController()
 
@@ -15,6 +18,8 @@ struct AccountShareController: RouteCollection {
         routes.get(use: list)
         routes.post("open", ":shareToken", use: open)
         routes.delete(":accountShareID", use: remove)
+        routes.get(":accountShareID", "settings", use: settings)
+        routes.patch(":accountShareID", "settings", use: updateSettings)
         routes.get(":accountShareID", "items", use: recipient.listItemsWithState)
         routes.put(":accountShareID", "items", ":itemID", "state", use: recipient.upsertState)
     }
@@ -28,8 +33,9 @@ struct AccountShareController: RouteCollection {
             }
             .all()
 
+        let socialViewerIDs = Set(try await SocialWishlistAccess.query(on: req.db).filter(\.$user.$id == userID).all().map(\.$viewer.id))
         return try viewers.map { viewer in
-            try savedShare(viewer: viewer, wishlist: viewer.wishlist, owner: viewer.wishlist.owner)
+            try savedShare(viewer: viewer, wishlist: viewer.wishlist, owner: viewer.wishlist.owner, removable: !socialViewerIDs.contains(try viewer.requireID()))
         }
         .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
@@ -54,7 +60,8 @@ struct AccountShareController: RouteCollection {
             .filter(\.$wishlist.$id == wishlistID)
             .filter(\.$user.$id == userID)
             .first() {
-            return try savedShare(viewer: existing, wishlist: wishlist, owner: owner)
+            let removable = try await SocialWishlistAccess.query(on: req.db).filter(\.$viewer.$id == existing.requireID()).first() == nil
+            return try savedShare(viewer: existing, wishlist: wishlist, owner: owner, removable: removable)
         }
 
         var viewer: WishlistViewer?
@@ -81,7 +88,7 @@ struct AccountShareController: RouteCollection {
             linkedViewer = created
         }
 
-        return try savedShare(viewer: linkedViewer, wishlist: wishlist, owner: owner)
+        return try savedShare(viewer: linkedViewer, wishlist: wishlist, owner: owner, removable: true)
     }
 
     func remove(req: Request) async throws -> HTTPStatus {
@@ -109,14 +116,36 @@ struct AccountShareController: RouteCollection {
         return .noContent
     }
 
-    private func savedShare(viewer: WishlistViewer, wishlist: Wishlist, owner: User) throws -> SavedShare {
+    func settings(req: Request) async throws -> SavedShare {
+        let userID = try req.auth.require(User.self).requireID()
+        guard let shareID = req.parameters.get("accountShareID", as: UUID.self),
+              let viewer = try await WishlistViewer.query(on: req.db).filter(\.$id == shareID).filter(\.$user.$id == userID)
+                .with(\.$wishlist) { $0.with(\.$owner) }.first() else { throw Abort(.notFound) }
+        let removable = try await SocialWishlistAccess.query(on: req.db).filter(\.$viewer.$id == shareID).first() == nil
+        return try savedShare(viewer: viewer, wishlist: viewer.wishlist, owner: viewer.wishlist.owner, removable: removable)
+    }
+
+    func updateSettings(req: Request) async throws -> SavedShare {
+        let userID = try req.auth.require(User.self).requireID()
+        guard let shareID = req.parameters.get("accountShareID", as: UUID.self),
+              let viewer = try await WishlistViewer.query(on: req.db).filter(\.$id == shareID).filter(\.$user.$id == userID)
+                .with(\.$wishlist) { $0.with(\.$owner) }.first() else { throw Abort(.notFound) }
+        viewer.notificationsEnabled = try req.content.decode(SettingsRequest.self).notificationsEnabled
+        try await viewer.save(on: req.db)
+        let removable = try await SocialWishlistAccess.query(on: req.db).filter(\.$viewer.$id == shareID).first() == nil
+        return try savedShare(viewer: viewer, wishlist: viewer.wishlist, owner: viewer.wishlist.owner, removable: removable)
+    }
+
+    private func savedShare(viewer: WishlistViewer, wishlist: Wishlist, owner: User, removable: Bool) throws -> SavedShare {
         let configuredName = owner.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackName = owner.email.split(separator: "@", maxSplits: 1).first.map(String.init) ?? "Someone"
         return SavedShare(
             id: try viewer.requireID(),
             wishlistID: try wishlist.requireID(),
             title: wishlist.title,
-            sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName
+            sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName,
+            notificationsEnabled: viewer.notificationsEnabled,
+            removable: removable
         )
     }
 }

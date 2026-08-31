@@ -28,6 +28,9 @@ final class WishlistViewer: Model, Content {
     @OptionalField(key: "display_name")
     var displayName: String?
 
+    @Field(key: "notifications_enabled")
+    var notificationsEnabled: Bool
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 
@@ -47,6 +50,7 @@ final class WishlistViewer: Model, Content {
         self.$wishlist.id = wishlistId
         self.viewerTokenHash = viewerTokenHash
         self.displayName = displayName
+        self.notificationsEnabled = true
         if let userId { self.$user.id = userId }
     }
 }

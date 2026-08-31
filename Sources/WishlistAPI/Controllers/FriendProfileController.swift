@@ -119,6 +119,7 @@ struct FriendProfileController: RouteCollection {
         let configuredName = owner.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackName = owner.email.split(separator: "@", maxSplits: 1).first.map(String.init) ?? "Someone"
         return .init(id: try viewer.requireID(), wishlistID: try wishlist.requireID(), title: wishlist.title,
-                     sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName)
+                     sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName,
+                     notificationsEnabled: viewer.notificationsEnabled, removable: false)
     }
 }
