@@ -16,6 +16,7 @@ struct WishlistController: RouteCollection {
         let visibility: String
         let collaborationMode: String
         let isPrimaryOwner: Bool
+        let isCollaborative: Bool
     }
 
     struct CreateRequest: Content {
@@ -68,12 +69,15 @@ struct WishlistController: RouteCollection {
             .filter(\.$user.$id == userId).all().map(\.$wishlist.id)
         let ownedIDs = try await Wishlist.query(on: req.db)
             .filter(\.$owner.$id == userId).all().compactMap(\.id)
+        let visibleIDs = Array(Set(ownedIDs + collaboratorIDs))
+        let collaborativeIDs = Set(try await WishlistCollaborator.query(on: req.db)
+            .filter(\.$wishlist.$id ~~ visibleIDs).all().map(\.$wishlist.id))
         return try await Wishlist.query(on: req.db)
-            .filter(\.$id ~~ Array(Set(ownedIDs + collaboratorIDs)))
+            .filter(\.$id ~~ visibleIDs)
             .sort(\.$position, .ascending)
             .sort(\.$createdAt, .descending)
             .all()
-            .map { try summary($0, for: userId) }
+            .map { try summary($0, for: userId, isCollaborative: collaborativeIDs.contains(try $0.requireID())) }
     }
 
     // POST /wishlists
@@ -103,7 +107,7 @@ struct WishlistController: RouteCollection {
             try await item.save(on: req.db)
         }
         try await wishlist.save(on: req.db)
-        return try summary(wishlist, for: userId)
+        return try summary(wishlist, for: userId, isCollaborative: false)
     }
 
     func reorder(req: Request) async throws -> HTTPStatus {
@@ -148,7 +152,9 @@ struct WishlistController: RouteCollection {
         wishlist.title = title
         try await wishlist.save(on: req.db)
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "A shared wishlist was renamed to “\(title)”.", on: req.db)
-        return try summary(wishlist, for: userId)
+        let isCollaborative = try await WishlistCollaborator.query(on: req.db)
+            .filter(\.$wishlist.$id == wishlistID).first() != nil
+        return try summary(wishlist, for: userId, isCollaborative: isCollaborative)
     }
 
     // DELETE /wishlists/:wishlistID
@@ -262,8 +268,9 @@ struct WishlistController: RouteCollection {
         }
     }
 
-    private func summary(_ wishlist: Wishlist, for userID: UUID) throws -> Summary {
+    private func summary(_ wishlist: Wishlist, for userID: UUID, isCollaborative: Bool) throws -> Summary {
         .init(id: try wishlist.requireID(), title: wishlist.title, visibility: wishlist.visibility,
-              collaborationMode: wishlist.collaborationMode, isPrimaryOwner: wishlist.$owner.id == userID)
+              collaborationMode: wishlist.collaborationMode, isPrimaryOwner: wishlist.$owner.id == userID,
+              isCollaborative: isCollaborative)
     }
 }
