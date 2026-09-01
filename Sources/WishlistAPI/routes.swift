@@ -90,14 +90,20 @@ func routes(_ app: Application) throws {
         }
         if let requestedUsername = body.username {
             let username = requestedUsername.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            let allowed = username.range(of: #"^[a-z0-9_]{3,30}$"#, options: .regularExpression) != nil
-            guard allowed else { throw Abort(.badRequest, reason: "Usernames must be 3–30 letters, numbers, or underscores.") }
-            if let existing = try await User.query(on: req.db)
-                .filter(\User.$username == username)
-                .first(), existing.id != user.id {
-                throw Abort(.conflict, reason: "That username is already taken.")
+            if let currentUsername = user.username {
+                guard username == currentUsername else {
+                    throw Abort(.forbidden, reason: "Your username cannot be changed after it is created.")
+                }
+            } else {
+                let allowed = username.range(of: #"^[a-z0-9_]{3,30}$"#, options: .regularExpression) != nil
+                guard allowed else { throw Abort(.badRequest, reason: "Usernames must be 3–30 letters, numbers, or underscores.") }
+                if let existing = try await User.query(on: req.db)
+                    .filter(\User.$username == username)
+                    .first(), existing.id != user.id {
+                    throw Abort(.conflict, reason: "That username is already taken.")
+                }
+                user.username = username
             }
-            user.username = username
         }
         if let isDiscoverable = body.isDiscoverable {
             guard user.username != nil || !isDiscoverable else { throw Abort(.badRequest, reason: "Choose a username before enabling discovery.") }
