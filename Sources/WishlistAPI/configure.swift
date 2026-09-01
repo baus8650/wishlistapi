@@ -107,6 +107,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(RevokeGrandfatheredProForPurchaseTesting())
     app.migrations.add(AddWishlistProductivityTools())
     app.migrations.add(CreatePushDevices())
+    app.migrations.add(AddCashFunds())
 
     // MARK: Routes
     try routes(app)

@@ -30,6 +30,12 @@ final class WishlistItem: Model, Content {
     @OptionalField(key: "owner_note")
     var ownerNote: String?
 
+    @Field(key: "item_type")
+    var itemType: String
+
+    @OptionalField(key: "contribution_goal")
+    var contributionGoal: Double?
+
     @Field(key: "quantity")
     var quantity: Int
 
@@ -51,7 +57,9 @@ final class WishlistItem: Model, Content {
         url: String? = nil,
         price: Double? = nil,
         ownerNote: String? = nil,
-        quantity: Int = 1
+        quantity: Int = 1,
+        itemType: String = "wish",
+        contributionGoal: Double? = nil
     ) {
         self.id = id
         self.$wishlist.id = wishlistId
@@ -60,6 +68,8 @@ final class WishlistItem: Model, Content {
         self.price = price
         self.ownerNote = ownerNote
         self.quantity = quantity
+        self.itemType = itemType
+        self.contributionGoal = contributionGoal
         self.position = 0
     }
 }

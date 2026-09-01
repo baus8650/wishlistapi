@@ -17,6 +17,8 @@ struct WishlistItemController: RouteCollection {
         let ownerNote: String?
         let quantity: Int?
         let linkedWishlistIDs: [UUID]?
+        let itemType: String?
+        let contributionGoal: Double?
     }
 
     struct UpdateRequest: Content {
@@ -26,6 +28,8 @@ struct WishlistItemController: RouteCollection {
         let ownerNote: String?
         let quantity: Int?
         let linkedWishlistIDs: [UUID]?
+        let itemType: String?
+        let contributionGoal: Double?
     }
 
     struct ReorderRequest: Content { let ids: [UUID] }
@@ -72,12 +76,15 @@ struct WishlistItemController: RouteCollection {
             throw Abort(.badRequest, reason: "price cannot be negative.")
         }
         guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
+        let itemType = try validatedType(body.itemType, url: body.url, goal: body.contributionGoal)
 
         item.title = title
         item.url = body.url?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         item.price = body.price
         item.ownerNote = body.ownerNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         item.quantity = body.quantity ?? 1
+        item.itemType = itemType
+        item.contributionGoal = itemType == "cash_fund" ? body.contributionGoal : nil
         try await item.save(on: req.db)
         if let linked = body.linkedWishlistIDs {
             try await syncMemberships(item: item, userID: userId, requestedIDs: Set(linked + [wishlistID]), on: req.db)
@@ -127,6 +134,7 @@ struct WishlistItemController: RouteCollection {
             throw Abort(.badRequest, reason: "price cannot be negative.")
         }
         guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
+        let itemType = try validatedType(body.itemType, url: body.url, goal: body.contributionGoal)
 
         let item = WishlistItem(
             wishlistId: wishlistID,
@@ -134,7 +142,9 @@ struct WishlistItemController: RouteCollection {
             url: body.url,
             price: body.price,
             ownerNote: body.ownerNote,
-            quantity: body.quantity ?? 1
+            quantity: body.quantity ?? 1,
+            itemType: itemType,
+            contributionGoal: itemType == "cash_fund" ? body.contributionGoal : nil
         )
         try await item.save(on: req.db)
         try await syncMemberships(item: item, userID: userId, requestedIDs: Set((body.linkedWishlistIDs ?? []) + [wishlistID]), on: req.db)
@@ -214,6 +224,11 @@ struct WishlistItemController: RouteCollection {
             guard quantity > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
             item.quantity = quantity
         }
+        if body.itemType != nil || body.contributionGoal != nil {
+            let type = try validatedType(body.itemType ?? item.itemType, url: body.url ?? item.url, goal: body.contributionGoal ?? item.contributionGoal)
+            item.itemType = type
+            item.contributionGoal = type == "cash_fund" ? (body.contributionGoal ?? item.contributionGoal) : nil
+        }
 
         try await item.save(on: req.db)
         if let linked = body.linkedWishlistIDs {
@@ -282,6 +297,19 @@ struct WishlistItemController: RouteCollection {
             for membership in memberships { membership.position += 1; try await membership.save(on: database) }
             try await WishlistItemMembership(itemID: itemID, wishlistID: wishlistID, position: 0).save(on: database)
         }
+    }
+
+    private func validatedType(_ value: String?, url: String?, goal: Double?) throws -> String {
+        let type = value ?? "wish"
+        guard type == "wish" || type == "cash_fund" else { throw Abort(.badRequest, reason: "Invalid item type.") }
+        if let goal, goal <= 0 { throw Abort(.badRequest, reason: "Contribution goal must be greater than zero.") }
+        if type == "cash_fund" {
+            guard let value = url?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let parsed = URL(string: value), parsed.scheme?.lowercased() == "https" else {
+                throw Abort(.badRequest, reason: "Cash funds require a valid HTTPS payment link.")
+            }
+        }
+        return type
     }
 }
 

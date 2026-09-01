@@ -333,7 +333,8 @@ struct WishlistController: RouteCollection {
         for (position, membership) in memberships.enumerated() {
             let sourceItem = membership.item
             let item = WishlistItem(wishlistId: try copy.requireID(), title: sourceItem.title, url: sourceItem.url,
-                                    price: sourceItem.price, ownerNote: sourceItem.ownerNote, quantity: sourceItem.quantity)
+                                    price: sourceItem.price, ownerNote: sourceItem.ownerNote, quantity: sourceItem.quantity,
+                                    itemType: sourceItem.itemType, contributionGoal: sourceItem.contributionGoal)
             try await item.save(on: req.db)
             let link = WishlistItemMembership(itemID: try item.requireID(), wishlistID: try copy.requireID(), position: position)
             try await link.save(on: req.db)
