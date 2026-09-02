@@ -18,12 +18,13 @@ enum APNSService {
         }
         let aps: APS
         let kind: String
+        let actorID: UUID?
         let wishlistID: UUID?
     }
 
     private struct ErrorResponse: Content { let reason: String }
 
-    static func send(userID: UUID, kind: String, title: String, message: String, wishlistID: UUID?, on db: any Database, client: any Client, logger: Logger) async {
+    static func send(userID: UUID, kind: String, title: String, message: String, actorID: UUID?, wishlistID: UUID?, on db: any Database, client: any Client, logger: Logger) async {
         guard let keyID = Environment.get("APNS_KEY_ID"),
               let teamID = Environment.get("APNS_TEAM_ID"),
               let bundleID = Environment.get("APNS_BUNDLE_ID"),
@@ -32,7 +33,7 @@ enum APNSService {
             return
         }
         let devices: [PushDevice]
-        do { devices = try await PushDevice.query(on: db).filter(\.$user.$id == userID).all() }
+        do { devices = try await PushDevice.query(on: db).filter(\.$user.$id == userID).filter(\.$platform == "ios").all() }
         catch { logger.warning("Could not load push devices: \(error)"); return }
         guard !devices.isEmpty else { return }
 
@@ -51,6 +52,7 @@ enum APNSService {
             let payload = Payload(
                 aps: .init(alert: .init(title: title, body: message), sound: "default", badge: unreadCount),
                 kind: kind,
+                actorID: actorID,
                 wishlistID: wishlistID
             )
             for device in devices {

@@ -17,7 +17,8 @@ enum ActivityService {
         guard userID != actorID else { return }
         try await ActivityNotification(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message).save(on: db)
         if let client, let logger {
-            await APNSService.send(userID: userID, kind: kind, title: title, message: message, wishlistID: wishlistID, on: db, client: client, logger: logger)
+            await APNSService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, on: db, client: client, logger: logger)
+            await FCMService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, on: db, client: client, logger: logger)
         }
     }
 

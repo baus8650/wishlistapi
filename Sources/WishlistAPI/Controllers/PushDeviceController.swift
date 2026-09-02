@@ -5,6 +5,7 @@ struct PushDeviceController: RouteCollection {
     private struct Registration: Content {
         let token: String
         let environment: String
+        let platform: String?
     }
 
     func boot(routes: any RoutesBuilder) throws {
@@ -15,17 +16,19 @@ struct PushDeviceController: RouteCollection {
     private func register(req: Request) async throws -> HTTPStatus {
         let user = try req.auth.require(User.self)
         let body = try req.content.decode(Registration.self)
-        let token = body.token.lowercased()
-        guard token.range(of: #"^[0-9a-f]{64,200}$"#, options: .regularExpression) != nil,
-              ["sandbox", "production"].contains(body.environment) else {
+        let platform = body.platform ?? "ios"
+        let token = platform == "android" ? body.token : body.token.lowercased()
+        let validToken = platform == "android" ? token.count >= 32 : token.range(of: #"^[0-9a-f]{64,200}$"#, options: .regularExpression) != nil
+        guard validToken, ["ios", "android"].contains(platform), ["sandbox", "production"].contains(body.environment) else {
             throw Abort(.badRequest, reason: "Invalid push registration.")
         }
         if let existing = try await PushDevice.query(on: req.db).filter(\.$token == token).first() {
             existing.$user.id = try user.requireID()
             existing.environment = body.environment
+            existing.platform = platform
             try await existing.save(on: req.db)
         } else {
-            try await PushDevice(userID: try user.requireID(), token: token, environment: body.environment).save(on: req.db)
+            try await PushDevice(userID: try user.requireID(), token: token, environment: body.environment, platform: platform).save(on: req.db)
         }
         return .noContent
     }

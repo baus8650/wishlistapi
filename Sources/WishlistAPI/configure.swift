@@ -107,6 +107,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(RevokeGrandfatheredProForPurchaseTesting())
     app.migrations.add(AddWishlistProductivityTools())
     app.migrations.add(CreatePushDevices())
+    app.migrations.add(AddPushDevicePlatform())
     app.migrations.add(AddCashFunds())
     app.migrations.add(CreateRecurringOccasions())
 
