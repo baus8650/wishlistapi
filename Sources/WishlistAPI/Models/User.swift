@@ -28,6 +28,9 @@ final class User: Model {
     @Field(key: "friend_request_policy")
     var friendRequestPolicy: String
 
+    @OptionalField(key: "privacy_setup_completed")
+    var privacySetupCompleted: Bool?
+
     @OptionalField(key: "avatar_data")
     var avatarData: Data?
 
@@ -53,6 +56,7 @@ final class User: Model {
         self.displayNameSearch = displayName?.lowercased()
         self.isDiscoverable = false
         self.friendRequestPolicy = "everyone"
+        self.privacySetupCompleted = false
         self.hasLifetimePro = false
     }
 }
@@ -66,6 +70,7 @@ extension User {
         let username: String?
         let isDiscoverable: Bool
         let friendRequestPolicy: String
+        let privacySetupCompleted: Bool
         let hasAvatar: Bool
         let isPro: Bool
         let createdAt: Date?
@@ -80,6 +85,7 @@ extension User {
             username: self.username,
             isDiscoverable: self.isDiscoverable,
             friendRequestPolicy: self.friendRequestPolicy,
+            privacySetupCompleted: self.privacySetupCompleted ?? true,
             hasAvatar: self.avatarData != nil,
             isPro: self.hasLifetimePro,
             createdAt: self.createdAt,

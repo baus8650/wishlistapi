@@ -110,6 +110,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddPushDevicePlatform())
     app.migrations.add(AddCashFunds())
     app.migrations.add(CreateRecurringOccasions())
+    app.migrations.add(AddPrivacyOnboardingToUser())
 
     // MARK: Routes
     try routes(app)

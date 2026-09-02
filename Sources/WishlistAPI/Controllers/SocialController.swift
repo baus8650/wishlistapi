@@ -73,9 +73,16 @@ struct SocialController: RouteCollection {
     func requestFriend(req: Request) async throws -> FriendshipDTO {
         let me = try req.auth.require(User.self).requireID()
         guard let other = req.parameters.get("requestID", as: UUID.self), other != me,
-              let user = try await User.find(other, on: req.db), user.isDiscoverable else { throw Abort(.notFound) }
+              let user = try await User.find(other, on: req.db) else { throw Abort(.notFound) }
         guard user.friendRequestPolicy != "nobody" else { throw Abort(.forbidden, reason: "This person is not accepting friend requests.") }
         guard !((try await blockPairs(for: me, on: req.db)).contains(other)) else { throw Abort(.notFound) }
+        if user.friendRequestPolicy == "friends_of_friends" {
+            let myFriends = try await acceptedFriendIDs(for: me, on: req.db)
+            let theirFriends = try await acceptedFriendIDs(for: other, on: req.db)
+            guard !myFriends.isDisjoint(with: theirFriends) else {
+                throw Abort(.forbidden, reason: "This person only accepts requests from friends of friends.")
+            }
+        }
         let existing = try await relationships(between: me, and: other, on: req.db)
         if existing.contains(where: { $0.status == "accepted" }) {
             throw Abort(.conflict, reason: "You are already friends.")
@@ -260,6 +267,20 @@ struct SocialController: RouteCollection {
             }
             .with(\.$requester)
             .all()
+    }
+
+    private func acceptedFriendIDs(for userID: UUID, on db: any Database) async throws -> Set<UUID> {
+        let outgoing = try await Friendship.query(on: db)
+            .filter(\.$requester.$id == userID)
+            .filter(\.$status == "accepted")
+            .all()
+            .map(\.$recipient.id)
+        let incoming = try await Friendship.query(on: db)
+            .filter(\.$recipient.$id == userID)
+            .filter(\.$status == "accepted")
+            .all()
+            .map(\.$requester.id)
+        return Set(outgoing + incoming)
     }
 
     private func refreshFriendRequestActivity(requesterID: UUID, recipientID: UUID, req: Request) async throws {

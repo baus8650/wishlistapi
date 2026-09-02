@@ -6,6 +6,7 @@ private struct UpdateProfileRequest: Content {
     let username: String?
     let isDiscoverable: Bool?
     let friendRequestPolicy: String?
+    let privacySetupCompleted: Bool?
 }
 
 func routes(_ app: Application) throws {
@@ -110,8 +111,14 @@ func routes(_ app: Application) throws {
             user.isDiscoverable = isDiscoverable
         }
         if let policy = body.friendRequestPolicy {
-            guard ["everyone", "nobody"].contains(policy) else { throw Abort(.badRequest, reason: "Invalid friend request policy.") }
+            guard ["everyone", "friends_of_friends", "nobody"].contains(policy) else { throw Abort(.badRequest, reason: "Invalid friend request policy.") }
             user.friendRequestPolicy = policy
+        }
+        if body.privacySetupCompleted == true {
+            guard user.username != nil, body.isDiscoverable != nil, body.friendRequestPolicy != nil else {
+                throw Abort(.badRequest, reason: "Choose your discovery and friend request settings before continuing.")
+            }
+            user.privacySetupCompleted = true
         }
         try await user.save(on: req.db)
         return user.toPublic()
