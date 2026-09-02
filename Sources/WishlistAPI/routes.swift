@@ -136,6 +136,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: NetworkController())
     try protected.register(collection: RecurringOccasionController())
     protected.get("metrics", "summary", use: metrics.summary)
+    try protected.register(collection: FeedbackController())
 
     // Mount wishlists at /wishlists
     let wishlists = protected.grouped("wishlists")

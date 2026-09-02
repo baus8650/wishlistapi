@@ -112,6 +112,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateRecurringOccasions())
     app.migrations.add(AddPrivacyOnboardingToUser())
     app.migrations.add(CreateWishlistDiscussionComments())
+    app.migrations.add(CreateUserFeedback())
 
     // MARK: Routes
     try routes(app)
