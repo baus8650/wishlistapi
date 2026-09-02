@@ -103,15 +103,26 @@ struct SocialController: RouteCollection {
 
     func acceptFromUser(req: Request) async throws -> FriendshipDTO {
         let me = try req.auth.require(User.self).requireID()
-        guard let requesterID = req.parameters.get("userID", as: UUID.self),
-              let friendship = try await Friendship.query(on: req.db)
+        guard let requesterID = req.parameters.get("userID", as: UUID.self) else { throw Abort(.badRequest) }
+        if let friendship = try await Friendship.query(on: req.db)
                 .filter(\.$requester.$id == requesterID)
                 .filter(\.$recipient.$id == me)
                 .filter(\.$status == "pending")
                 .with(\.$requester)
-                .first()
-        else { throw Abort(.notFound, reason: "This friend request is no longer pending.") }
-        return try await accept(friendship, for: me, req: req)
+                .first() {
+            return try await accept(friendship, for: me, req: req)
+        }
+        // Acceptance is idempotent. A second tap, stale activity card, or another
+        // signed-in device may arrive after the relationship was already accepted.
+        if let accepted = try await Friendship.query(on: req.db)
+            .filter(\.$requester.$id == requesterID)
+            .filter(\.$recipient.$id == me)
+            .filter(\.$status == "accepted")
+            .with(\.$requester)
+            .first() {
+            return FriendshipDTO(id: try accepted.requireID(), user: try socialUser(accepted.requester), direction: "incoming", status: "accepted")
+        }
+        throw Abort(.notFound, reason: "This friend request is no longer pending.")
     }
 
     func declineFromUser(req: Request) async throws -> HTTPStatus {
