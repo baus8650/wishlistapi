@@ -127,6 +127,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: FriendProfileController())
     try protected.register(collection: PinController())
     try protected.register(collection: NetworkController())
+    try protected.register(collection: RecurringOccasionController())
     protected.get("metrics", "summary", use: metrics.summary)
 
     // Mount wishlists at /wishlists
