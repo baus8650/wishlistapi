@@ -111,6 +111,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddCashFunds())
     app.migrations.add(CreateRecurringOccasions())
     app.migrations.add(AddPrivacyOnboardingToUser())
+    app.migrations.add(CreateWishlistDiscussionComments())
 
     // MARK: Routes
     try routes(app)

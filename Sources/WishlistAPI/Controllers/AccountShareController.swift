@@ -32,6 +32,9 @@ struct AccountShareController: RouteCollection {
         routes.patch(":accountShareID", "settings", use: updateSettings)
         routes.get(":accountShareID", "items", use: recipient.listItemsWithState)
         routes.put(":accountShareID", "items", ":itemID", "state", use: recipient.upsertState)
+        routes.get(":accountShareID", "discussion", use: recipient.listDiscussion)
+        routes.post(":accountShareID", "discussion", use: recipient.createDiscussionComment)
+        routes.delete(":accountShareID", "discussion", ":commentID", use: recipient.deleteDiscussionComment)
     }
 
     func list(req: Request) async throws -> [SavedShare] {

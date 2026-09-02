@@ -75,6 +75,20 @@ struct RecipientShareController: RouteCollection {
         let isMine: Bool
     }
 
+    struct DiscussionCommentResponse: Content {
+        let id: UUID
+        let message: String
+        let authorDisplayName: String?
+        let createdAt: Date?
+        let isMine: Bool
+    }
+
+    struct CreateDiscussionCommentRequest: Content {
+        let message: String
+        let displayName: String?
+        let shareName: Bool?
+    }
+
     struct ItemWithRecipientInfo: Content {
         let item: WishlistItem
         let purchased: Bool          // purchased by anyone
@@ -93,6 +107,90 @@ struct RecipientShareController: RouteCollection {
 
         // Recipient: set purchased/note (requires viewer token; requires displayName when purchased=true and name missing)
         routes.put("shares", ":shareToken", "items", ":itemID", "state", use: upsertState)
+        routes.get("shares", ":shareToken", "discussion", use: listDiscussion)
+        routes.post("shares", ":shareToken", "discussion", use: createDiscussionComment)
+        routes.delete("shares", ":shareToken", "discussion", ":commentID", use: deleteDiscussionComment)
+    }
+
+    func listDiscussion(req: Request) async throws -> [DiscussionCommentResponse] {
+        let (wishlist, viewer) = try await resolveWishlistAndViewer(req: req)
+        try await ensureDiscussionAccess(wishlist: wishlist, viewer: viewer, req: req)
+        let wishlistID = try wishlist.requireID()
+        let viewerID = try viewer.requireID()
+        let comments = try await WishlistDiscussionComment.query(on: req.db)
+            .filter(\.$wishlist.$id == wishlistID)
+            .sort(\.$createdAt, .ascending)
+            .all()
+        let viewerIDs = Array(Set(comments.map(\.$viewer.id)))
+        let viewers = try await WishlistViewer.query(on: req.db).filter(\.$id ~~ viewerIDs).all()
+        let names = Dictionary(uniqueKeysWithValues: viewers.compactMap { item -> (UUID, String)? in
+            guard let id = item.id else { return nil }
+            let name = (item.displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return name.isEmpty ? nil : (id, name)
+        })
+        return comments.compactMap { comment in
+            guard let id = comment.id else { return nil }
+            return .init(
+                id: id,
+                message: comment.message,
+                authorDisplayName: comment.shareName ? names[comment.$viewer.id] : nil,
+                createdAt: comment.createdAt,
+                isMine: comment.$viewer.id == viewerID
+            )
+        }
+    }
+
+    func createDiscussionComment(req: Request) async throws -> DiscussionCommentResponse {
+        let (wishlist, viewer) = try await resolveWishlistAndViewer(req: req)
+        try await ensureDiscussionAccess(wishlist: wishlist, viewer: viewer, req: req)
+        let body = try req.content.decode(CreateDiscussionCommentRequest.self)
+        let message = body.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty, message.count <= 1_000 else {
+            throw Abort(.badRequest, reason: "Comments must be between 1 and 1,000 characters.")
+        }
+        let shareName = body.shareName == true
+        if shareName {
+            let submittedName = body.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let savedName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard submittedName?.isEmpty == false || savedName?.isEmpty == false else {
+                throw Abort(.badRequest, reason: "A display name is required to share your name.")
+            }
+            if let submittedName, !submittedName.isEmpty, submittedName != savedName {
+                guard submittedName.count <= 80 else { throw Abort(.badRequest, reason: "Display name is too long.") }
+                viewer.displayName = submittedName
+                try await viewer.save(on: req.db)
+            }
+        }
+        let comment = WishlistDiscussionComment(
+            wishlistID: try wishlist.requireID(),
+            viewerID: try viewer.requireID(),
+            message: message,
+            shareName: shareName
+        )
+        try await comment.save(on: req.db)
+        return .init(
+            id: try comment.requireID(),
+            message: comment.message,
+            authorDisplayName: shareName ? viewer.displayName : nil,
+            createdAt: comment.createdAt,
+            isMine: true
+        )
+    }
+
+    func deleteDiscussionComment(req: Request) async throws -> HTTPStatus {
+        let (wishlist, viewer) = try await resolveWishlistAndViewer(req: req)
+        try await ensureDiscussionAccess(wishlist: wishlist, viewer: viewer, req: req)
+        let wishlistID = try wishlist.requireID()
+        let viewerID = try viewer.requireID()
+        guard let commentID = req.parameters.get("commentID", as: UUID.self),
+              let comment = try await WishlistDiscussionComment.query(on: req.db)
+                .filter(\.$id == commentID)
+                .filter(\.$wishlist.$id == wishlistID)
+                .filter(\.$viewer.$id == viewerID)
+                .first()
+        else { throw Abort(.notFound) }
+        try await comment.delete(on: req.db)
+        return .noContent
     }
 
     // MARK: Recipient views shared wishlist (creates viewer token silently)
@@ -430,6 +528,21 @@ struct RecipientShareController: RouteCollection {
         else { throw Abort(.unauthorized, reason: "Invalid viewer token.") }
 
         return (wishlist, viewer)
+    }
+
+    private func ensureDiscussionAccess(wishlist: Wishlist, viewer: WishlistViewer, req: Request) async throws {
+        guard let userID = viewer.$user.id else { return }
+        let wishlistID = try wishlist.requireID()
+        if wishlist.$owner.id == userID {
+            throw Abort(.forbidden, reason: "Wishlist owners cannot view the private gift-planning discussion.")
+        }
+        let isCollaborator = try await WishlistCollaborator.query(on: req.db)
+            .filter(\.$wishlist.$id == wishlistID)
+            .filter(\.$user.$id == userID)
+            .first() != nil
+        if isCollaborator {
+            throw Abort(.forbidden, reason: "Wishlist owners cannot view the private gift-planning discussion.")
+        }
     }
 }
 
