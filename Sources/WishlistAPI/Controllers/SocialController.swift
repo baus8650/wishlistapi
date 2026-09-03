@@ -37,6 +37,7 @@ struct SocialController: RouteCollection {
         routes.delete("blocks", ":userID", use: unblock)
         routes.get("friend-groups", use: groups)
         routes.post("friend-groups", use: createGroup)
+        routes.put("friend-groups", ":groupID", use: updateGroup)
         routes.delete("friend-groups", ":groupID", use: deleteGroup)
         routes.put("friend-groups", ":groupID", "members", ":userID", use: addMember)
         routes.delete("friend-groups", ":groupID", "members", ":userID", use: removeMember)
@@ -219,6 +220,15 @@ struct SocialController: RouteCollection {
         try await group.delete(on: req.db)
         for wishlistID in wishlistIDs { try await AudienceService.sync(wishlistID: wishlistID, on: req.db) }
         return .noContent
+    }
+
+    func updateGroup(req: Request) async throws -> FriendGroupDTO {
+        let group = try await ownedGroup(req)
+        let name = try req.content.decode(CreateGroupRequest.self).name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 60 else { throw Abort(.badRequest, reason: "Group names must be 1–60 characters.") }
+        group.name = name
+        try await group.save(on: req.db)
+        return try await groupDTO(group, on: req.db)
     }
 
     func addMember(req: Request) async throws -> FriendGroupDTO {
