@@ -9,16 +9,25 @@ final class UserFeedback: Model, Content {
     @Field(key: "category") var category: String
     @Field(key: "message") var message: String
     @Field(key: "platform") var platform: String
+    @Field(key: "share_name") var shareName: Bool
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
 
     init() {}
 
-    init(id: UUID? = nil, userID: UUID, category: String, message: String, platform: String) {
+    init(
+        id: UUID? = nil,
+        userID: UUID,
+        category: String,
+        message: String,
+        platform: String,
+        shareName: Bool
+    ) {
         self.id = id
         self.$user.id = userID
         self.category = category
         self.message = message
         self.platform = platform
+        self.shareName = shareName
     }
 }
 
