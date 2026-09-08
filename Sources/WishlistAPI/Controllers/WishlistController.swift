@@ -270,10 +270,18 @@ struct WishlistController: RouteCollection {
             .first()
         else { throw Abort(.notFound) }
 
-        let changesProSettings = body.occasionDate != nil || body.clearOccasionDate == true
-            || body.reminderEnabled != nil || body.icon != nil || body.colorTheme != nil
-            || body.isArchived != nil || body.customColorHex != nil || body.clearCustomColor == true
-            || body.reminderDate != nil || body.clearReminderDate == true
+        let changesProSettings = [
+            body.occasionDate != nil,
+            body.clearOccasionDate == true,
+            body.reminderEnabled != nil,
+            body.icon != nil,
+            body.colorTheme != nil,
+            body.isArchived != nil,
+            body.customColorHex != nil,
+            body.clearCustomColor == true,
+            body.reminderDate != nil,
+            body.clearReminderDate == true
+        ].contains(true)
         if changesProSettings { try ProAccessService.requirePro(user) }
 
         if let v = body.showPurchaserNames { wishlist.showPurchaserNames = v }
