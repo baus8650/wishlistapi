@@ -17,3 +17,5 @@ Before releasing the API and updated iOS build:
 7. Release the iOS code that syncs verified transactions on purchase, restore, launch/account configuration, and transaction updates. Existing buyers need to open the updated app or Restore Purchases once to sync. Failed sync leaves local StoreKit access available and shows retry instructions; it does not finish the new transaction until the server acknowledges it.
 
 Web payments and Android are advertised as coming soon. The iOS download CTA is intentionally text while the app awaits approval. Replace it with the actual App Store URL at launch. Future web checkout should update the account entitlement through a separately verified payment-provider flow; preserve existing lifetime purchases and keep purchase provenance separate if multiple billing providers are introduced.
+
+Then cross your fingers!
