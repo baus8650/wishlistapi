@@ -6,7 +6,7 @@ struct FeedbackController: RouteCollection {
         let category: String
         let message: String
         let platform: String
-        let shareName: Bool
+        let shareName: Bool?
     }
 
     struct Response: Content {
@@ -61,7 +61,7 @@ struct FeedbackController: RouteCollection {
             category: category,
             message: message,
             platform: platform,
-            shareName: body.shareName
+            shareName: body.shareName ?? false
         )
 
         try await feedback.save(on: req.db)
