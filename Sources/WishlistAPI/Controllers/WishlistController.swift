@@ -7,6 +7,7 @@
 
 import Vapor
 import Fluent
+import SQLKit
 
 struct WishlistController: RouteCollection {
 
@@ -111,32 +112,37 @@ struct WishlistController: RouteCollection {
 
     // POST /wishlists
     func create(req: Request) async throws -> Summary {
-        let user = try req.auth.require(User.self)
-        let userId = try user.requireID()
-        let body = try req.content.decode(CreateRequest.self)
+        let userId = try req.auth.require(User.self).requireID()
+        return try await req.db.transaction { db in
+            guard let sql = db as? any SQLDatabase else { throw Abort(.internalServerError) }
+            try await sql.raw("SELECT id FROM users WHERE id = \(bind: userId) FOR UPDATE").run()
+            guard let user = try await User.find(userId, on: db) else { throw Abort(.unauthorized) }
+            try await ProAccessService.requireListCapacity(user, on: db)
+            let body = try req.content.decode(CreateRequest.self)
 
-        let title = body.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else {
-            throw Abort(.badRequest, reason: "Title is required.")
-        }
+            let title = body.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else {
+                throw Abort(.badRequest, reason: "Title is required.")
+            }
 
-        let visibility = body.visibility ?? "public"
-        guard ["public", "private"].contains(visibility) else {
-            throw Abort(.badRequest, reason: "Visibility must be public or private.")
+            let visibility = body.visibility ?? "public"
+            guard ["public", "private"].contains(visibility) else {
+                throw Abort(.badRequest, reason: "Visibility must be public or private.")
+            }
+            let wishlist = Wishlist(ownerUserId: userId, title: title)
+            wishlist.visibility = visibility
+            if let mode = body.collaborationMode {
+                guard ["our_wishlist", "gift_planning"].contains(mode) else { throw Abort(.badRequest, reason: "Invalid collaboration mode.") }
+                wishlist.collaborationMode = mode
+            }
+            let existing = try await Wishlist.query(on: db).filter(\.$owner.$id == userId).all()
+            for item in existing {
+                item.position += 1
+                try await item.save(on: db)
+            }
+            try await wishlist.save(on: db)
+            return try summary(wishlist, for: userId, isCollaborative: false)
         }
-        let wishlist = Wishlist(ownerUserId: userId, title: title)
-        wishlist.visibility = visibility
-        if let mode = body.collaborationMode {
-            guard ["our_wishlist", "gift_planning"].contains(mode) else { throw Abort(.badRequest, reason: "Invalid collaboration mode.") }
-            wishlist.collaborationMode = mode
-        }
-        let existing = try await Wishlist.query(on: req.db).filter(\.$owner.$id == userId).all()
-        for item in existing {
-            item.position += 1
-            try await item.save(on: req.db)
-        }
-        try await wishlist.save(on: req.db)
-        return try summary(wishlist, for: userId, isCollaborative: false)
     }
 
     func reorder(req: Request) async throws -> HTTPStatus {
@@ -264,6 +270,12 @@ struct WishlistController: RouteCollection {
             .first()
         else { throw Abort(.notFound) }
 
+        let changesProSettings = body.occasionDate != nil || body.clearOccasionDate == true
+            || body.reminderEnabled != nil || body.icon != nil || body.colorTheme != nil
+            || body.isArchived != nil || body.customColorHex != nil || body.clearCustomColor == true
+            || body.reminderDate != nil || body.clearReminderDate == true
+        if changesProSettings { try ProAccessService.requirePro(user) }
+
         if let v = body.showPurchaserNames { wishlist.showPurchaserNames = v }
         if let v = body.allowMultiplePurchases { wishlist.allowMultiplePurchases = v }
         if let v = body.allowNotes { wishlist.allowNotes = v }
@@ -315,6 +327,7 @@ struct WishlistController: RouteCollection {
     }
 
     func duplicate(req: Request) async throws -> Summary {
+        try ProAccessService.requirePro(req.auth.require(User.self))
         let userID = try req.auth.require(User.self).requireID()
         guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
               let source = try await Wishlist.query(on: req.db).filter(\.$id == wishlistID).filter(\.$owner.$id == userID).first()

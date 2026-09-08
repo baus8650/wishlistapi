@@ -78,6 +78,7 @@ COPY --from=build --chown=vapor:vapor /staging /app
 
 # Provide configuration needed by the built-in crash reporter and some sensible default behaviors.
 ENV SWIFT_BACKTRACE=enable=yes,sanitize=yes,threads=all,images=all,interactive=no,swift-backtrace=./swift-backtrace-static
+ENV APPLE_ROOT_CERTIFICATE_PATHS=/app/Resources/AppleCertificates/AppleIncRootCertificate.cer,/app/Resources/AppleCertificates/AppleRootCA-G2.cer,/app/Resources/AppleCertificates/AppleRootCA-G3.cer
 
 # Ensure all further commands run as the vapor user
 USER vapor:vapor

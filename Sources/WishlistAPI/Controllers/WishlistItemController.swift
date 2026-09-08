@@ -77,6 +77,7 @@ struct WishlistItemController: RouteCollection {
         }
         guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
         let itemType = try validatedType(body.itemType, url: body.url, goal: body.contributionGoal)
+        if itemType == "cash_fund" { try ProAccessService.requirePro(user) }
 
         item.title = title
         item.url = body.url?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
@@ -135,6 +136,7 @@ struct WishlistItemController: RouteCollection {
         }
         guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
         let itemType = try validatedType(body.itemType, url: body.url, goal: body.contributionGoal)
+        if itemType == "cash_fund" { try ProAccessService.requirePro(user) }
 
         let item = WishlistItem(
             wishlistId: wishlistID,
@@ -208,6 +210,7 @@ struct WishlistItemController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
 
         let body = try req.content.decode(UpdateRequest.self)
+        if body.itemType == "cash_fund" || item.itemType == "cash_fund" { try ProAccessService.requirePro(user) }
 
         if let title = body.title {
             let t = title.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -7,6 +7,7 @@ let package = Package(
        .macOS(.v13)
     ],
     dependencies: [
+        .package(url: "https://github.com/apple/app-store-server-library-swift.git", .upToNextMinor(from: "6.0.0")),
         // 💧 A server-side Swift web framework.
         .package(url: "https://github.com/vapor/vapor.git", from: "4.115.0"),
         // 🗄 An ORM for SQL and NoSQL databases.
@@ -20,6 +21,7 @@ let package = Package(
         .executableTarget(
             name: "WishlistAPI",
             dependencies: [
+                .product(name: "AppStoreServerLibrary", package: "app-store-server-library-swift"),
                 .product(name: "Vapor", package: "vapor"),
                 .product(name: "Fluent", package: "fluent"),
                 .product(name: "FluentPostgresDriver", package: "fluent-postgres-driver"),

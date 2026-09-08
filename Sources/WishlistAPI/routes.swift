@@ -54,6 +54,7 @@ func routes(_ app: Application) throws {
 
     // Auth (register/login)
     try v1.register(collection: AuthController())
+    try v1.register(collection: ProPurchaseController())
 
     // Public sharing + recipient endpoints (anonymous-friendly)
     try v1.register(collection: RecipientShareController())

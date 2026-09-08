@@ -113,6 +113,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddPrivacyOnboardingToUser())
     app.migrations.add(CreateWishlistDiscussionComments())
     app.migrations.add(CreateUserFeedback())
+    app.migrations.add(CreateAppleProPurchases())
 
     // MARK: Routes
     try routes(app)

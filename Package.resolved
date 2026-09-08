@@ -1,6 +1,15 @@
 {
-  "originHash" : "50afabcfd074129f31eba96314a9efbc7688208c1e8edf30705be58b90a51867",
+  "originHash" : "ff36ff35ff4b2a099ff64313cab7be1cc6e67cdface2b54c602a799e358bd482",
   "pins" : [
+    {
+      "identity" : "app-store-server-library-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/app-store-server-library-swift.git",
+      "state" : {
+        "revision" : "ac7d41d3ef564265d6e8028357a7f4e5812f54da",
+        "version" : "6.0.0"
+      }
+    },
     {
       "identity" : "async-http-client",
       "kind" : "remoteSourceControl",
