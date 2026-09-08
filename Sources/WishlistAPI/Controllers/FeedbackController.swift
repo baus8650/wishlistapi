@@ -52,7 +52,7 @@ struct FeedbackController: RouteCollection {
             )
         }
 
-        guard ["ios", "web"].contains(platform) else {
+        guard ["ios", "android", "web"].contains(platform) else {
             throw Abort(.badRequest, reason: "Invalid platform.")
         }
 

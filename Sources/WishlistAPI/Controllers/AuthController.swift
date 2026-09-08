@@ -38,8 +38,36 @@ private struct GoogleTokenInfo: Content {
     let aud: String
     let sub: String
     let email: String
-    let email_verified: String?
+    let email_verified: GoogleBoolean?
     let name: String?
+}
+
+// Google has returned this tokeninfo field as both a JSON string (for example,
+// "true") and a JSON boolean over time. Keep the verifier compatible with
+// either representation so a provider response-format change cannot break
+// sign-in after the app has already obtained a valid ID token.
+private enum GoogleBoolean: Decodable {
+    case value(Bool)
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let value = try? container.decode(Bool.self) {
+            self = .value(value)
+        } else if let value = try? container.decode(String.self),
+                  let parsed = Bool(value.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            self = .value(parsed)
+        } else {
+            throw DecodingError.typeMismatch(
+                GoogleBoolean.self,
+                .init(codingPath: decoder.codingPath, debugDescription: "Expected a Google boolean or string boolean.")
+            )
+        }
+    }
+
+    var isTrue: Bool {
+        if case .value(let value) = self { return value }
+        return false
+    }
 }
 
 struct PasswordResetMessage: Content {
@@ -225,7 +253,7 @@ struct AuthController: RouteCollection {
             throw Abort(.internalServerError, reason: "Google sign-in is not configured.")
         }
         guard allowedAudiences.contains(profile.aud),
-              profile.email_verified == "true",
+              profile.email_verified?.isTrue == true,
               profile.iss == "accounts.google.com" || profile.iss == "https://accounts.google.com"
         else {
             throw Abort(.unauthorized, reason: "Google sign-in could not be verified.")

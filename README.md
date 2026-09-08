@@ -50,6 +50,8 @@ Docker Compose supplies local defaults. Set secure values in production:
 | `DATABASE_USERNAME` | `wishlist` |
 | `DATABASE_PASSWORD` | `wishlist` |
 | `JWT_SECRET` | `dev-only-change-me` |
+| `GOOGLE_WEB_CLIENT_ID` | unset; required for Google sign-in |
+| `GOOGLE_IOS_CLIENT_ID` | unset; optional additional Google audience |
 | `DATABASE_URL` | unset; overrides the individual database variables when set |
 | `PORT` | `8080`; hosting platforms can assign this dynamically |
 | `AUTO_MIGRATE` | `false`; set to `true` for the Railway beta deployment |
