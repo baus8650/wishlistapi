@@ -52,6 +52,8 @@ Docker Compose supplies local defaults. Set secure values in production:
 | `JWT_SECRET` | `dev-only-change-me` |
 | `GOOGLE_WEB_CLIENT_ID` | unset; required for Google sign-in |
 | `GOOGLE_IOS_CLIENT_ID` | unset; optional additional Google audience |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | unset; service-account JSON used to send Android FCM pushes |
+| `FIREBASE_SERVICE_ACCOUNT_BASE64` | unset; base64 alternative to `FIREBASE_SERVICE_ACCOUNT_JSON` |
 | `DATABASE_URL` | unset; overrides the individual database variables when set |
 | `PORT` | `8080`; hosting platforms can assign this dynamically |
 | `AUTO_MIGRATE` | `false`; set to `true` for the Railway beta deployment |
@@ -75,6 +77,12 @@ Never deploy with the default JWT secret or database password.
    - `LOG_LEVEL=info`
 5. Under Networking, generate a public domain and set the health-check path to
    `/health`.
+6. For Android push notifications, create/download a Firebase service-account
+   key from the Firebase project used by `wishlist-android/app/google-services.json`
+   (`hushful-75939`), base64-encode the JSON, and add it as
+   `FIREBASE_SERVICE_ACCOUNT_BASE64`. Do not use the Google OAuth web client
+   project (`hushful`) for this credential. Enable the Firebase Cloud Messaging
+   API if Google Cloud requests it.
 
 The container reads Railway's assigned `PORT`. With `AUTO_MIGRATE=true`, any
 pending Fluent migrations run before the API begins accepting traffic.

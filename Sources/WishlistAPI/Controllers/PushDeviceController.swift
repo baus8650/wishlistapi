@@ -38,7 +38,7 @@ struct PushDeviceController: RouteCollection {
         guard let token = req.parameters.get("token") else { throw Abort(.badRequest) }
         try await PushDevice.query(on: req.db)
             .filter(\.$user.$id == userID)
-            .filter(\.$token == token.lowercased())
+            .filter(\.$token == token)
             .delete()
         return .noContent
     }
