@@ -1,5 +1,6 @@
 import Fluent
 import SQLKit
+import Vapor
 
 struct AddCashFunds: AsyncMigration {
     func prepare(on database: any Database) async throws {
