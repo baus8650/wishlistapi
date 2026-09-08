@@ -97,6 +97,9 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreatePublicWishlistAccess())
     app.migrations.add(CreateUserPins())
     app.migrations.add(AddWishlistOrdering())
+    // WishlistItemMemberships seeds WishlistItem models, so the item_type and
+    // contribution_goal columns must exist before that migration queries items.
+    app.migrations.add(AddCashFunds())
     app.migrations.add(CreateWishlistItemMemberships())
     app.migrations.add(CreateWishlistCollaborators())
     app.migrations.add(AddSharedListNotifications())
@@ -108,7 +111,6 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddWishlistProductivityTools())
     app.migrations.add(CreatePushDevices())
     app.migrations.add(AddPushDevicePlatform())
-    app.migrations.add(AddCashFunds())
     app.migrations.add(CreateRecurringOccasions())
     app.migrations.add(AddPrivacyOnboardingToUser())
     app.migrations.add(CreateWishlistDiscussionComments())
