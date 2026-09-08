@@ -33,7 +33,7 @@ struct GoogleLoginRequest: Content {
     let idToken: String
 }
 
-private struct GoogleTokenInfo: Content {
+private struct GoogleTokenInfo: Decodable {
     let iss: String?
     let aud: String
     let sub: String
@@ -49,7 +49,7 @@ private struct GoogleTokenInfo: Content {
 private enum GoogleBoolean: Decodable {
     case value(Bool)
 
-    init(from decoder: Decoder) throws {
+    init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         if let value = try? container.decode(Bool.self) {
             self = .value(value)
