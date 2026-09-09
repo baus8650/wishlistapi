@@ -37,6 +37,11 @@ final class User: Model {
     @OptionalField(key: "privacy_setup_completed")
     var privacySetupCompleted: Bool?
 
+    /// Versioned onboarding completion lets every client agree on whether the
+    /// current account has seen the latest first-run experience.
+    @OptionalField(key: "onboarding_version")
+    var onboardingVersion: Int?
+
     @OptionalField(key: "avatar_data")
     var avatarData: Data?
 
@@ -77,6 +82,7 @@ extension User {
         let isDiscoverable: Bool
         let friendRequestPolicy: String
         let privacySetupCompleted: Bool
+        let onboardingVersion: Int?
         let hasAvatar: Bool
         let isPro: Bool
         let createdAt: Date?
@@ -92,6 +98,7 @@ extension User {
             isDiscoverable: self.isDiscoverable,
             friendRequestPolicy: self.friendRequestPolicy,
             privacySetupCompleted: self.privacySetupCompleted ?? true,
+            onboardingVersion: self.onboardingVersion,
             hasAvatar: self.avatarData != nil,
             isPro: self.hasLifetimePro,
             createdAt: self.createdAt,

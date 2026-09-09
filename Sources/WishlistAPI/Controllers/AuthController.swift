@@ -13,6 +13,9 @@ struct RegisterRequest: Content {
     let email: String
     let password: String
     let displayName: String?
+    /// Honeypot field for low-effort automated registrations. Real clients
+    /// leave it empty; a filled value is rejected before account creation.
+    let website: String?
 }
 
 struct LoginRequest: Content {
@@ -120,8 +123,15 @@ struct AuthController: RouteCollection {
 
     func register(req: Request) async throws -> EmailVerificationPendingResponse {
         let body = try req.content.decode(RegisterRequest.self)
+        guard body.website?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
+            throw Abort(.badRequest, reason: "Unable to create account.")
+        }
         let email = body.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let displayName = body.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let clientKey = AuthRateLimitService.clientKey(req)
+        try await AuthRateLimitService.enforce(req, scope: "register-ip:\(clientKey)", limit: 10, window: 60 * 60)
+        try await AuthRateLimitService.enforce(req, scope: "register-email:\(email)", limit: 5, window: 60 * 60)
 
         guard email.contains("@"), body.password.count >= 8 else {
             throw Abort(.badRequest, reason: "Invalid email or password too short (min 8).")
@@ -179,6 +189,8 @@ struct AuthController: RouteCollection {
     func login(req: Request) async throws -> TokenResponse {
         let body = try req.content.decode(LoginRequest.self)
         let email = body.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        try await AuthRateLimitService.enforce(req, scope: "login-ip:\(AuthRateLimitService.clientKey(req))", limit: 30, window: 15 * 60)
+        try await AuthRateLimitService.enforce(req, scope: "login-email:\(email)", limit: 12, window: 15 * 60)
 
         guard let user = try await User.query(on: req.db)
             .filter(\.$email == email)
@@ -199,6 +211,7 @@ struct AuthController: RouteCollection {
     }
 
     func verifyEmail(req: Request) async throws -> TokenResponse {
+        try await AuthRateLimitService.enforce(req, scope: "verify-ip:\(AuthRateLimitService.clientKey(req))", limit: 20, window: 15 * 60)
         let body = try req.content.decode(VerifyEmailRequest.self)
         let parts = body.token.split(separator: ".", maxSplits: 1).map(String.init)
         guard parts.count == 2,
@@ -221,6 +234,7 @@ struct AuthController: RouteCollection {
     }
 
     func resendEmailVerification(req: Request) async throws -> EmailVerificationMessage {
+        try await AuthRateLimitService.enforce(req, scope: "resend-verification-ip:\(AuthRateLimitService.clientKey(req))", limit: 10, window: 15 * 60)
         let body = try req.content.decode(ResendEmailVerificationRequest.self)
         let email = body.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let genericMessage = "If that account still needs verification, a link is on its way."
@@ -253,6 +267,7 @@ struct AuthController: RouteCollection {
     }
 
     func forgotPassword(req: Request) async throws -> PasswordResetMessage {
+        try await AuthRateLimitService.enforce(req, scope: "forgot-password-ip:\(AuthRateLimitService.clientKey(req))", limit: 10, window: 15 * 60)
         let body = try req.content.decode(ForgotPasswordRequest.self)
         let email = body.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let genericMessage = "If an account exists for that email, a password reset link is on its way."
@@ -298,6 +313,7 @@ struct AuthController: RouteCollection {
     }
 
     func resetPassword(req: Request) async throws -> PasswordResetMessage {
+        try await AuthRateLimitService.enforce(req, scope: "reset-password-ip:\(AuthRateLimitService.clientKey(req))", limit: 10, window: 15 * 60)
         let body = try req.content.decode(ResetPasswordRequest.self)
         guard body.password.count >= 8 else {
             throw Abort(.badRequest, reason: "Password must be at least 8 characters.")

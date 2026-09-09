@@ -10,6 +10,11 @@ struct WebMetricsController {
         let id: UUID
         let displayName: String?
         let email: String
+        let username: String?
+        let emailVerified: Bool
+        let onboardingVersion: Int?
+        let isPro: Bool
+        let suspicious: Bool
         let createdAt: Date?
     }
 
@@ -44,11 +49,27 @@ struct WebMetricsController {
 
     func accounts(req: Request) async throws -> [AccountDirectoryEntry] {
         try requireAdmin(req)
-        let accounts = try await User.query(on: req.db)
+        let query = (req.query[String.self, at: "q"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let limit = min(max(req.query[Int.self, at: "limit"] ?? 500, 1), 1_000)
+        let accountsQuery = User.query(on: req.db)
+        if !query.isEmpty {
+            accountsQuery.group(.or) { matches in
+                matches.filter(\.$email ~~ query)
+                matches.filter(\.$displayNameSearch ~~ query)
+                matches.filter(\.$username ~~ query)
+            }
+        }
+        let accounts = try await accountsQuery
             .sort(\.$createdAt, .descending)
+            .limit(limit)
             .all()
         return try accounts.map {
-            .init(id: try $0.requireID(), displayName: $0.displayName, email: $0.email, createdAt: $0.createdAt)
+            let localPart = $0.email.split(separator: "@", maxSplits: 1).first.map(String.init) ?? ""
+            let normalizedName = ($0.displayName ?? "").lowercased().filter { $0.isLetter || $0.isNumber }
+            let looksGenerated = !normalizedName.isEmpty
+                && localPart.lowercased().hasPrefix(normalizedName)
+                && localPart.dropFirst(normalizedName.count).contains(where: { $0.isNumber })
+            return .init(id: try $0.requireID(), displayName: $0.displayName, email: $0.email, username: $0.username, emailVerified: $0.emailVerifiedAt != nil, onboardingVersion: $0.onboardingVersion, isPro: $0.hasLifetimePro, suspicious: looksGenerated, createdAt: $0.createdAt)
         }
     }
 

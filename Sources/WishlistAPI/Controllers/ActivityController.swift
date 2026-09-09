@@ -12,6 +12,10 @@ struct ActivityDTO: Content {
     let createdAt: Date?
 }
 
+struct ActivityUnreadCount: Content {
+    let count: Int
+}
+
 enum ActivityService {
     static func create(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
         guard userID != actorID else { return }
@@ -35,6 +39,7 @@ enum ActivityService {
 struct ActivityController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         routes.get("activity", use: list)
+        routes.get("activity", "unread-count", use: unreadCount)
         routes.post("activity", "read-all", use: readAll)
         routes.post("activity", ":notificationID", "read", use: read)
         routes.delete("activity", use: clearAll)
@@ -44,6 +49,15 @@ struct ActivityController: RouteCollection {
     func list(req: Request) async throws -> [ActivityDTO] {
         let userID = try req.auth.require(User.self).requireID()
         return try await ActivityNotification.query(on: req.db).filter(\.$user.$id == userID).sort(\.$createdAt, .descending).limit(100).all().map(dto)
+    }
+
+    func unreadCount(req: Request) async throws -> ActivityUnreadCount {
+        let userID = try req.auth.require(User.self).requireID()
+        let count = try await ActivityNotification.query(on: req.db)
+            .filter(\.$user.$id == userID)
+            .filter(\.$readAt == nil)
+            .count()
+        return .init(count: count)
     }
 
     func read(req: Request) async throws -> ActivityDTO {

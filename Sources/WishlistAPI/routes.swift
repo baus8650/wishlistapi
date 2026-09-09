@@ -7,6 +7,7 @@ private struct UpdateProfileRequest: Content {
     let isDiscoverable: Bool?
     let friendRequestPolicy: String?
     let privacySetupCompleted: Bool?
+    let onboardingVersion: Int?
 }
 
 func routes(_ app: Application) throws {
@@ -121,6 +122,13 @@ func routes(_ app: Application) throws {
             }
             user.privacySetupCompleted = true
         }
+        if let onboardingVersion = body.onboardingVersion {
+            guard onboardingVersion == 1,
+                  user.username != nil,
+                  user.privacySetupCompleted == true
+            else { throw Abort(.badRequest, reason: "Finish account setup before completing onboarding.") }
+            user.onboardingVersion = onboardingVersion
+        }
         try await user.save(on: req.db)
         return user.toPublic()
     }
@@ -129,6 +137,7 @@ func routes(_ app: Application) throws {
     try protected.grouped("shared-wishlists").register(collection: AccountShareController())
 
     try protected.register(collection: SocialController())
+    try protected.register(collection: UserReportController())
     try protected.register(collection: AccountAvatarController())
     try protected.register(collection: ActivityController())
     try protected.register(collection: PushDeviceController())
