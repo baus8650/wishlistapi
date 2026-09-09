@@ -142,6 +142,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: ActivityController())
     try protected.register(collection: PushDeviceController())
     try protected.register(collection: FriendProfileController())
+    try protected.register(collection: ProfileDetailsController())
     try protected.register(collection: PinController())
     try protected.register(collection: NetworkController())
     try protected.register(collection: RecurringOccasionController())

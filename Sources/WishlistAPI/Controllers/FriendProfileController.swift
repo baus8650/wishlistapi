@@ -11,6 +11,11 @@ struct FriendProfileDTO: Content {
     let user: SocialUserDTO
     let publicWishlists: [ProfileWishlistDTO]
     let sharedWishlists: [ProfileWishlistDTO]
+    let birthdayMonth: Int?
+    let birthdayDay: Int?
+    let attributes: [ProfileAttributeDTO]
+    let birthdayAlertEnabled: Bool
+    let birthdayAlertDaysBefore: Int?
 }
 
 struct FriendProfileController: RouteCollection {
@@ -51,11 +56,32 @@ struct FriendProfileController: RouteCollection {
             .map { ProfileWishlistDTO(wishlistID: try $0.wishlist.requireID(), title: $0.wishlist.title, accountShareID: $0.$viewer.id) }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
 
+        let attributes = try await UserProfileAttribute.query(on: req.db)
+            .filter(\.$user.$id == otherID)
+            .sort(\.$labelSearch, .ascending)
+            .all()
+        let visibleBirthday = try await ProfileAccessService.canViewBirthday(viewerID: me, target: other, on: req.db)
+        var visibleAttributes: [ProfileAttributeDTO] = []
+        for attribute in attributes {
+            if try await ProfileAccessService.canViewAttribute(attribute, viewerID: me, target: other, on: req.db) {
+                visibleAttributes.append(attribute.dto())
+            }
+        }
+        let birthdayAlert = visibleBirthday ? try await BirthdayAlert.query(on: req.db)
+            .filter(\.$subscriber.$id == me)
+            .filter(\.$subject.$id == otherID)
+            .first() : nil
+
         let username = other.username ?? "hushful_\(otherID.uuidString.prefix(8).lowercased())"
         return FriendProfileDTO(
             user: SocialUserDTO(id: otherID, username: username, displayName: other.displayName, hasAvatar: other.avatarData != nil),
             publicWishlists: publicWishlists,
-            sharedWishlists: sharedWishlists
+            sharedWishlists: sharedWishlists,
+            birthdayMonth: visibleBirthday ? other.birthdayMonth : nil,
+            birthdayDay: visibleBirthday ? other.birthdayDay : nil,
+            attributes: visibleAttributes,
+            birthdayAlertEnabled: birthdayAlert != nil,
+            birthdayAlertDaysBefore: birthdayAlert?.reminderDaysBefore
         )
     }
 

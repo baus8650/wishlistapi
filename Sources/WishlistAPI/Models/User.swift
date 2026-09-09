@@ -42,6 +42,20 @@ final class User: Model {
     @OptionalField(key: "onboarding_version")
     var onboardingVersion: Int?
 
+    /// Birthdays intentionally store only month/day. Hushful does not need a
+    /// birth year for reminders, and omitting it avoids exposing a user's age.
+    @OptionalField(key: "birthday_month")
+    var birthdayMonth: Int?
+
+    @OptionalField(key: "birthday_day")
+    var birthdayDay: Int?
+
+    @Field(key: "birthday_visibility")
+    var birthdayVisibility: String
+
+    @Field(key: "birthday_setup_completed")
+    var birthdaySetupCompleted: Bool
+
     @OptionalField(key: "avatar_data")
     var avatarData: Data?
 
@@ -68,6 +82,8 @@ final class User: Model {
         self.isDiscoverable = false
         self.friendRequestPolicy = "everyone"
         self.privacySetupCompleted = false
+        self.birthdayVisibility = "private"
+        self.birthdaySetupCompleted = false
         self.hasLifetimePro = false
     }
 }
@@ -83,6 +99,10 @@ extension User {
         let friendRequestPolicy: String
         let privacySetupCompleted: Bool
         let onboardingVersion: Int?
+        let birthdayMonth: Int?
+        let birthdayDay: Int?
+        let birthdayVisibility: String
+        let birthdaySetupCompleted: Bool
         let hasAvatar: Bool
         let isPro: Bool
         let createdAt: Date?
@@ -99,6 +119,10 @@ extension User {
             friendRequestPolicy: self.friendRequestPolicy,
             privacySetupCompleted: self.privacySetupCompleted ?? true,
             onboardingVersion: self.onboardingVersion,
+            birthdayMonth: self.birthdayMonth,
+            birthdayDay: self.birthdayDay,
+            birthdayVisibility: self.birthdayVisibility,
+            birthdaySetupCompleted: self.birthdaySetupCompleted || (self.birthdayMonth != nil && self.birthdayDay != nil),
             hasAvatar: self.avatarData != nil,
             isPro: self.hasLifetimePro,
             createdAt: self.createdAt,

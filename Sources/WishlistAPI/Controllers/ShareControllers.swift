@@ -96,6 +96,7 @@ struct RecipientShareController: RouteCollection {
         let purchasedByOthers: Bool  // purchased by another viewer
         let purchasedQuantity: Int   // total quantity claimed by all viewers
         let purchasedQuantityByMe: Int
+        let purchasedByNames: [String]? // named planners who purchased (gift planning only)
         let notes: [RecipientNote]   // notes from all recipients
     }
 
@@ -342,7 +343,7 @@ struct RecipientShareController: RouteCollection {
 
         return items.map { item in
             guard let id = item.id else {
-                return ItemWithRecipientInfo(item: item, purchased: false, purchasedByMe: false, purchasedByOthers: false, purchasedQuantity: 0, purchasedQuantityByMe: 0, notes: [])
+                return ItemWithRecipientInfo(item: item, purchased: false, purchasedByMe: false, purchasedByOthers: false, purchasedQuantity: 0, purchasedQuantityByMe: 0, purchasedByNames: nil, notes: [])
             }
 
             let itemStates = statesByItem[id] ?? []
@@ -385,6 +386,18 @@ struct RecipientShareController: RouteCollection {
                 notes = []
             }
 
+            let purchasedByNames: [String]?
+            if wishlist.collaborationMode == "gift_planning" {
+                var names: [String] = []
+                for state in itemStates where state.$viewer.id != viewerId && state.purchasedQuantity > 0 && viewerWishlistByID[state.$viewer.id] == wishlistId {
+                    guard let name = displayNameByViewerId[state.$viewer.id], !names.contains(name) else { continue }
+                    names.append(name)
+                }
+                purchasedByNames = names
+            } else {
+                purchasedByNames = nil
+            }
+
             return ItemWithRecipientInfo(
                 item: item,
                 purchased: purchasedByAnyone,
@@ -392,6 +405,7 @@ struct RecipientShareController: RouteCollection {
                 purchasedByOthers: purchasedQuantity > purchasedQuantityByMe,
                 purchasedQuantity: purchasedQuantity,
                 purchasedQuantityByMe: purchasedQuantityByMe,
+                purchasedByNames: purchasedByNames,
                 notes: notes
             )
         }
@@ -526,6 +540,12 @@ struct RecipientShareController: RouteCollection {
             let allStates = try await ItemViewerState.query(on: req.db).filter(\.$item.$id == itemID).all()
             let purchasedQuantity = allStates.reduce(0) { $0 + $1.purchasedQuantity }
             let purchasedByAnyone = purchasedQuantity > 0
+            let purchasedByNames = try await namedPurchasers(
+                in: allStates,
+                excluding: viewerId,
+                wishlist: wishlist,
+                on: req.db
+            )
 
             let purchasedByMe = state.purchased
             let notes: [RecipientNote] = {
@@ -536,7 +556,7 @@ struct RecipientShareController: RouteCollection {
                 return [RecipientNote(note: raw, authorDisplayName: author, updatedAt: state.updatedAt, isMine: true)]
             }()
 
-            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchasedByMe, purchasedByOthers: purchasedQuantity > state.purchasedQuantity, purchasedQuantity: purchasedQuantity, purchasedQuantityByMe: state.purchasedQuantity, notes: notes)
+            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchasedByMe, purchasedByOthers: purchasedQuantity > state.purchasedQuantity, purchasedQuantity: purchasedQuantity, purchasedQuantityByMe: state.purchasedQuantity, purchasedByNames: purchasedByNames, notes: notes)
         } else {
             let purchasedQuantity = desiredQuantity ?? 0
             let purchased = purchasedQuantity > 0
@@ -573,12 +593,55 @@ struct RecipientShareController: RouteCollection {
             let allStates = try await ItemViewerState.query(on: req.db).filter(\.$item.$id == itemID).all()
             let totalPurchasedQuantity = allStates.reduce(0) { $0 + $1.purchasedQuantity }
             let purchasedByAnyone = totalPurchasedQuantity > 0
+            let purchasedByNames = try await namedPurchasers(
+                in: allStates,
+                excluding: viewerId,
+                wishlist: wishlist,
+                on: req.db
+            )
 
-            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchased, purchasedByOthers: totalPurchasedQuantity > purchasedQuantity, purchasedQuantity: totalPurchasedQuantity, purchasedQuantityByMe: purchasedQuantity, notes: notes)
+            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchased, purchasedByOthers: totalPurchasedQuantity > purchasedQuantity, purchasedQuantity: totalPurchasedQuantity, purchasedQuantityByMe: purchasedQuantity, purchasedByNames: purchasedByNames, notes: notes)
         }
     }
 
     // MARK: Helpers
+    private func namedPurchasers(
+        in states: [ItemViewerState],
+        excluding viewerID: UUID,
+        wishlist: Wishlist,
+        on db: any Database
+    ) async throws -> [String]? {
+        guard wishlist.collaborationMode == "gift_planning" else { return nil }
+        let wishlistID = try wishlist.requireID()
+
+        let viewerIDs = Array(Set(states
+            .filter { $0.$viewer.id != viewerID && $0.purchasedQuantity > 0 }
+            .map { $0.$viewer.id }))
+        guard !viewerIDs.isEmpty else { return [] }
+
+        let viewers = try await WishlistViewer.query(on: db)
+            .filter(\.$id ~~ viewerIDs)
+            .filter(\.$wishlist.$id == wishlistID)
+            .all()
+
+        let displayNameByViewerID: [UUID: String] = Dictionary(
+            uniqueKeysWithValues: viewers.compactMap { viewer in
+                guard let id = viewer.id else { return nil }
+                let name = (viewer.displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return name.isEmpty ? nil : (id, name)
+            }
+        )
+        var names: [String] = []
+        for state in states {
+            guard state.$viewer.id != viewerID,
+                  state.purchasedQuantity > 0,
+                  let name = displayNameByViewerID[state.$viewer.id],
+                  !names.contains(name) else { continue }
+            names.append(name)
+        }
+        return names
+    }
+
     private func resolveWishlistAndViewer(req: Request) async throws -> (Wishlist, WishlistViewer) {
         if let accountShareID = req.parameters.get("accountShareID", as: UUID.self),
            let user = req.auth.get(User.self) {

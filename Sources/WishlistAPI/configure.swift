@@ -121,6 +121,9 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateAuthRateLimitEvents())
     app.migrations.add(CreateUserReports())
     app.migrations.add(AddOnboardingState())
+    app.migrations.add(AddBirthdayToUser())
+    app.migrations.add(AddBirthdaySetupState())
+    app.migrations.add(CreateProfileDetails())
 
     // MARK: Routes
     try routes(app)
