@@ -125,8 +125,12 @@ func routes(_ app: Application) throws {
         if let onboardingVersion = body.onboardingVersion {
             guard onboardingVersion == 1,
                   user.username != nil,
-                  user.privacySetupCompleted == true
-            else { throw Abort(.badRequest, reason: "Finish account setup before completing onboarding.") }
+                  user.privacySetupCompleted == true,
+                  user.birthdaySetupCompleted == true,
+                  user.birthdayYear != nil,
+                  user.birthdayMonth != nil,
+                  user.birthdayDay != nil
+            else { throw Abort(.badRequest, reason: "Add your birthday before completing onboarding.") }
             user.onboardingVersion = onboardingVersion
         }
         try await user.save(on: req.db)

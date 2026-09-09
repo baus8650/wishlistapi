@@ -4,6 +4,7 @@ import Vapor
 struct ProfileDetailsDTO: Content {
     let birthdayMonth: Int?
     let birthdayDay: Int?
+    let birthdayYear: Int?
     let birthdayVisibility: String
     let birthdaySetupCompleted: Bool
     let attributes: [ProfileAttributeDTO]
@@ -12,6 +13,7 @@ struct ProfileDetailsDTO: Content {
 struct UpdateProfileDetailsRequest: Content {
     let birthdayMonth: Int?
     let birthdayDay: Int?
+    let birthdayYear: Int?
     let birthdayVisibility: String?
     let clearBirthday: Bool?
     let birthdaySetupCompleted: Bool?
@@ -61,18 +63,25 @@ struct ProfileDetailsController: RouteCollection {
         if body.clearBirthday == true {
             user.birthdayMonth = nil
             user.birthdayDay = nil
+            user.birthdayYear = nil
+            user.birthdaySetupCompleted = false
             try await BirthdayAlert.query(on: req.db).filter(\.$subject.$id == user.requireID()).delete()
-        } else if body.birthdayMonth != nil || body.birthdayDay != nil {
-            guard let month = body.birthdayMonth, let day = body.birthdayDay, Self.validDate(month: month, day: day) else {
-                throw Abort(.badRequest, reason: "Choose a valid birthday month and day.")
+        } else if body.birthdayMonth != nil || body.birthdayDay != nil || body.birthdayYear != nil {
+            guard let year = body.birthdayYear, let month = body.birthdayMonth, let day = body.birthdayDay,
+                  Self.validDate(year: year, month: month, day: day) else {
+                throw Abort(.badRequest, reason: "Choose a valid birthday including the year.")
             }
+            user.birthdayYear = year
             user.birthdayMonth = month
             user.birthdayDay = day
         }
 
-        if body.birthdaySetupCompleted == true || body.clearBirthday == true || body.birthdayMonth != nil || body.birthdayDay != nil {
+        if body.birthdayMonth != nil || body.birthdayDay != nil || body.birthdayYear != nil {
             user.birthdaySetupCompleted = true
         }
+
+        user.ageBand = user.derivedAgeBand
+        user.matureProfileEnabled = user.isAgeRestrictedProfile
 
         if user.birthdayVisibility == "private" {
             try await BirthdayAlert.query(on: req.db).filter(\.$subject.$id == user.requireID()).delete()
@@ -189,8 +198,9 @@ struct ProfileDetailsController: RouteCollection {
         return .init(
             birthdayMonth: user.birthdayMonth,
             birthdayDay: user.birthdayDay,
+            birthdayYear: user.birthdayYear,
             birthdayVisibility: user.birthdayVisibility,
-            birthdaySetupCompleted: user.birthdaySetupCompleted || (user.birthdayMonth != nil && user.birthdayDay != nil),
+            birthdaySetupCompleted: user.birthdayYear != nil && user.birthdayMonth != nil && user.birthdayDay != nil,
             attributes: attributes.map { $0.dto() }
         )
     }
@@ -209,5 +219,16 @@ struct ProfileDetailsController: RouteCollection {
     }
 
     private static func validVisibility(_ visibility: String) -> Bool { ["public", "friends", "private"].contains(visibility) }
-    private static func validDate(month: Int, day: Int) -> Bool { (1...12).contains(month) && (1...31).contains(day) }
+    private static func validDate(year: Int, month: Int, day: Int) -> Bool {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = Date()
+        let currentYear = calendar.component(.year, from: now)
+        guard (currentYear - 120...currentYear).contains(year) else { return false }
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = day
+        guard let date = calendar.date(from: components) else { return false }
+        return date <= calendar.startOfDay(for: now)
+    }
 }

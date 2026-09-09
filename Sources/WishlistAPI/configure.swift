@@ -94,6 +94,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddUserAvatar())
     app.migrations.add(CreateActivityNotifications())
     app.migrations.add(AddWishlistVisibility())
+    app.migrations.add(MakeWishlistsPrivateByDefault())
     app.migrations.add(CreatePublicWishlistAccess())
     app.migrations.add(CreateUserPins())
     app.migrations.add(AddWishlistOrdering())
@@ -124,6 +125,8 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddBirthdayToUser())
     app.migrations.add(AddBirthdaySetupState())
     app.migrations.add(CreateProfileDetails())
+    app.migrations.add(AddAgeSafetyFields())
+    app.migrations.add(AddBirthdayYearToUser())
 
     // MARK: Routes
     try routes(app)

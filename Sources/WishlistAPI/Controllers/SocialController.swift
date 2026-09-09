@@ -44,7 +44,8 @@ struct SocialController: RouteCollection {
     }
 
     func search(req: Request) async throws -> [SocialUserDTO] {
-        let me = try req.auth.require(User.self).requireID()
+        let viewer = try req.auth.require(User.self)
+        let me = try viewer.requireID()
         let q = (req.query[String.self, at: "q"] ?? "").lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard q.count >= 2 else { return [] }
         let blocks = try await blockPairs(for: me, on: req.db)
@@ -54,11 +55,14 @@ struct SocialController: RouteCollection {
                 matches.filter(\.$username ~~ q)
                 matches.filter(\.$displayNameSearch ~~ q)
             }
-            .limit(20).all()
+            .limit(50).all()
             .compactMap { user in
-                guard let id = user.id, id != me, !blocks.contains(id), let username = user.username else { return nil }
+                guard let id = user.id, id != me, !blocks.contains(id), let username = user.username,
+                      !user.isAgeRestrictedProfile || viewer.derivedAgeBand == "adult" else { return nil }
                 return SocialUserDTO(id: id, username: username, displayName: user.displayName, hasAvatar: user.avatarData != nil)
             }
+            .prefix(20)
+            .map { $0 }
     }
 
     func friends(req: Request) async throws -> [FriendshipDTO] {

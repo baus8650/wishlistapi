@@ -42,13 +42,27 @@ final class User: Model {
     @OptionalField(key: "onboarding_version")
     var onboardingVersion: Int?
 
-    /// Birthdays intentionally store only month/day. Hushful does not need a
-    /// birth year for reminders, and omitting it avoids exposing a user's age.
+    /// Derived age band retained for compatibility with existing clients and
+    /// records. Safety decisions use `derivedAgeBand`, calculated from the
+    /// private birthday below.
+    @Field(key: "age_band")
+    var ageBand: String
+
+    /// Compatibility field. It is synchronized from the private birthday and
+    /// is not user-controlled.
+    @Field(key: "mature_profile_enabled")
+    var matureProfileEnabled: Bool
+
+    /// Birthdays are private by default. The year is used only on the server to
+    /// derive the account's age band and is never returned for another user.
     @OptionalField(key: "birthday_month")
     var birthdayMonth: Int?
 
     @OptionalField(key: "birthday_day")
     var birthdayDay: Int?
+
+    @OptionalField(key: "birthday_year")
+    var birthdayYear: Int?
 
     @Field(key: "birthday_visibility")
     var birthdayVisibility: String
@@ -82,10 +96,24 @@ final class User: Model {
         self.isDiscoverable = false
         self.friendRequestPolicy = "everyone"
         self.privacySetupCompleted = false
+        self.ageBand = "unknown"
+        self.matureProfileEnabled = false
         self.birthdayVisibility = "private"
         self.birthdaySetupCompleted = false
         self.hasLifetimePro = false
     }
+
+    var derivedAgeBand: String {
+        guard let year = birthdayYear, let month = birthdayMonth, let day = birthdayDay else { return "unknown" }
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.dateComponents([.year, .month, .day], from: Date())
+        guard let currentYear = today.year, let currentMonth = today.month, let currentDay = today.day else { return "unknown" }
+        var age = currentYear - year
+        if (currentMonth, currentDay) < (month, day) { age -= 1 }
+        return age >= 18 ? "adult" : "under_18"
+    }
+
+    var isAgeRestrictedProfile: Bool { derivedAgeBand == "adult" }
 }
 
 extension User {
@@ -99,6 +127,8 @@ extension User {
         let friendRequestPolicy: String
         let privacySetupCompleted: Bool
         let onboardingVersion: Int?
+        let ageBand: String
+        let matureProfileEnabled: Bool
         let birthdayMonth: Int?
         let birthdayDay: Int?
         let birthdayVisibility: String
@@ -119,10 +149,12 @@ extension User {
             friendRequestPolicy: self.friendRequestPolicy,
             privacySetupCompleted: self.privacySetupCompleted ?? true,
             onboardingVersion: self.onboardingVersion,
+            ageBand: self.derivedAgeBand,
+            matureProfileEnabled: self.isAgeRestrictedProfile,
             birthdayMonth: self.birthdayMonth,
             birthdayDay: self.birthdayDay,
             birthdayVisibility: self.birthdayVisibility,
-            birthdaySetupCompleted: self.birthdaySetupCompleted || (self.birthdayMonth != nil && self.birthdayDay != nil),
+            birthdaySetupCompleted: self.birthdayYear != nil && self.birthdayMonth != nil && self.birthdayDay != nil,
             hasAvatar: self.avatarData != nil,
             isPro: self.hasLifetimePro,
             createdAt: self.createdAt,

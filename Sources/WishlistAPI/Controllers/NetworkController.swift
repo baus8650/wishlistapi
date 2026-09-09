@@ -15,7 +15,8 @@ struct NetworkController: RouteCollection {
     }
 
     func wishlists(req: Request) async throws -> [NetworkWishlistDTO] {
-        let me = try req.auth.require(User.self).requireID()
+        let viewer = try req.auth.require(User.self)
+        let me = try viewer.requireID()
         let outgoing = try await Friendship.query(on: req.db)
             .filter(\.$requester.$id == me).filter(\.$status == "accepted").all().map(\.$recipient.id)
         let incoming = try await Friendship.query(on: req.db)
@@ -40,6 +41,8 @@ struct NetworkController: RouteCollection {
         for wishlist in publicLists {
             let id = try wishlist.requireID(), ownerID = wishlist.$owner.id
             guard !collaborativeIDs.contains(id) else { continue }
+            guard let ownerUser = users.first(where: { $0.id == ownerID }),
+                  !ownerUser.isAgeRestrictedProfile || viewer.derivedAgeBand == "adult" else { continue }
             guard let owner = owners[ownerID] else { continue }
             result[id] = .init(wishlistID: id, title: wishlist.title, owner: owner, access: "public", accountShareID: nil)
         }

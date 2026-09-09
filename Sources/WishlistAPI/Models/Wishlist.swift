@@ -80,7 +80,7 @@ final class Wishlist: Model, Content {
         id: UUID? = nil,
         ownerUserId: UUID,
         title: String,
-        visibility: String = "public",
+        visibility: String = "private",
         showPurchaserNames: Bool = false,
         allowMultiplePurchases: Bool = false,
         allowNotes: Bool = true,

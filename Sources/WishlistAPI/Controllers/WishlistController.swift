@@ -125,7 +125,9 @@ struct WishlistController: RouteCollection {
                 throw Abort(.badRequest, reason: "Title is required.")
             }
 
-            let visibility = body.visibility ?? "public"
+            // New lists are private unless the user explicitly chooses public.
+            // This protects users who call the API without a visibility field too.
+            let visibility = body.visibility ?? "private"
             guard ["public", "private"].contains(visibility) else {
                 throw Abort(.badRequest, reason: "Visibility must be public or private.")
             }

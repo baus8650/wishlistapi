@@ -26,13 +26,17 @@ struct FriendProfileController: RouteCollection {
     }
 
     func profile(req: Request) async throws -> FriendProfileDTO {
-        let me = try req.auth.require(User.self).requireID()
+        let currentUser = try req.auth.require(User.self)
+        let me = try currentUser.requireID()
         guard let otherID = req.parameters.get("userID", as: UUID.self),
               otherID != me,
               let other = try await User.find(otherID, on: req.db) else {
             throw Abort(.notFound)
         }
         guard try await !isBlocked(me, otherID, on: req.db) else { throw Abort(.notFound) }
+        guard !other.isAgeRestrictedProfile || currentUser.derivedAgeBand == "adult" else {
+            throw Abort(.forbidden, reason: "This profile is not available to your account.")
+        }
 
         let isFriend = try await areFriends(me, otherID, on: req.db)
         guard isFriend || other.isDiscoverable else { throw Abort(.notFound) }
@@ -86,7 +90,8 @@ struct FriendProfileController: RouteCollection {
     }
 
     func openPublicWishlist(req: Request) async throws -> AccountShareController.SavedShare {
-        let me = try req.auth.require(User.self).requireID()
+        let currentUser = try req.auth.require(User.self)
+        let me = try currentUser.requireID()
         guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
               let wishlist = try await Wishlist.query(on: req.db)
                 .filter(\.$id == wishlistID)
@@ -94,16 +99,20 @@ struct FriendProfileController: RouteCollection {
                 .with(\.$owner)
                 .first() else { throw Abort(.notFound) }
 
+        guard !wishlist.owner.isAgeRestrictedProfile || currentUser.derivedAgeBand == "adult" else {
+            throw Abort(.forbidden, reason: "This list is not available to your account.")
+        }
+
         if let existing = try await WishlistViewer.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistID)
             .filter(\.$user.$id == me).first() {
             return try savedShare(existing, wishlist)
         }
 
-        let viewer = WishlistViewer(wishlistId: wishlistID, userId: me)
-        try await viewer.save(on: req.db)
-        try await PublicWishlistAccess(wishlistID: wishlistID, userID: me, viewerID: viewer.requireID()).save(on: req.db)
-        return try savedShare(viewer, wishlist)
+        let savedViewer = WishlistViewer(wishlistId: wishlistID, userId: me)
+        try await savedViewer.save(on: req.db)
+        try await PublicWishlistAccess(wishlistID: wishlistID, userID: me, viewerID: savedViewer.requireID()).save(on: req.db)
+        return try savedShare(savedViewer, wishlist)
     }
 
     func groupLists(req: Request) async throws -> [ProfileWishlistDTO] {
