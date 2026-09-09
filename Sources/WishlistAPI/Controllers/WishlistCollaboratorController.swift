@@ -23,7 +23,11 @@ struct WishlistCollaboratorController: RouteCollection {
     }
 
     func show(req: Request) async throws -> Response {
+        let user = try req.auth.require(User.self)
         let wishlist = try await WishlistPermissionService.editableWishlist(req: req)
+        guard !wishlist.matureContentEnabled || user.derivedAgeBand == "adult" else {
+            throw Abort(.forbidden, reason: "This list is not available to your account.")
+        }
         return try await response(for: wishlist, on: req.db)
     }
 
@@ -42,6 +46,14 @@ struct WishlistCollaboratorController: RouteCollection {
         for otherID in requested {
             guard try await acceptedFriendship(userID, otherID, on: req.db) else {
                 throw Abort(.forbidden, reason: "Only friends can co-own a wishlist.")
+            }
+            guard try await !ProfileAccessService.isBlocked(userID, otherID, on: req.db) else {
+                throw Abort(.forbidden, reason: "A blocked account cannot be added as a collaborator.")
+            }
+            if wishlist.matureContentEnabled {
+                guard let collaborator = try await User.find(otherID, on: req.db), collaborator.derivedAgeBand == "adult" else {
+                    throw Abort(.forbidden, reason: "Only adult accounts can collaborate on a list limited to adults.")
+                }
             }
         }
         let existing = try await WishlistCollaborator.query(on: req.db)

@@ -2,6 +2,7 @@ import Fluent
 import Vapor
 
 struct ProfileDetailsDTO: Content {
+    let matureProfileEnabled: Bool
     let birthdayMonth: Int?
     let birthdayDay: Int?
     let birthdayYear: Int?
@@ -11,6 +12,7 @@ struct ProfileDetailsDTO: Content {
 }
 
 struct UpdateProfileDetailsRequest: Content {
+    let matureProfileEnabled: Bool?
     let birthdayMonth: Int?
     let birthdayDay: Int?
     let birthdayYear: Int?
@@ -30,6 +32,14 @@ struct BirthdayAlertDTO: Content {
     let reminderDaysBefore: Int
 }
 
+struct BirthdayAlertSubscriptionDTO: Content {
+    let userID: UUID
+    let displayName: String
+    let birthdayMonth: Int
+    let birthdayDay: Int
+    let reminderDaysBefore: Int
+}
+
 struct UpdateBirthdayAlertRequest: Content {
     let enabled: Bool
     let reminderDaysBefore: Int?
@@ -44,6 +54,7 @@ struct ProfileDetailsController: RouteCollection {
         routes.delete("me", "profile-attributes", ":attributeID", use: deleteAttribute)
         routes.get("users", ":userID", "birthday-alert", use: birthdayAlert)
         routes.put("users", ":userID", "birthday-alert", use: updateBirthdayAlert)
+        routes.get("me", "birthday-alerts", use: birthdayAlerts)
     }
 
     func details(req: Request) async throws -> ProfileDetailsDTO {
@@ -71,6 +82,9 @@ struct ProfileDetailsController: RouteCollection {
                   Self.validDate(year: year, month: month, day: day) else {
                 throw Abort(.badRequest, reason: "Choose a valid birthday including the year.")
             }
+            guard Self.age(year: year, month: month, day: day) >= 13 else {
+                throw Abort(.forbidden, reason: "Hushful accounts are available to people age 13 and older.")
+            }
             user.birthdayYear = year
             user.birthdayMonth = month
             user.birthdayDay = day
@@ -81,12 +95,27 @@ struct ProfileDetailsController: RouteCollection {
         }
 
         user.ageBand = user.derivedAgeBand
-        user.matureProfileEnabled = user.isAgeRestrictedProfile
+        if let matureProfileEnabled = body.matureProfileEnabled {
+            if matureProfileEnabled && user.derivedAgeBand != "adult" {
+                throw Abort(.badRequest, reason: "Only adult accounts can limit a profile to adult viewers.")
+            }
+            user.matureProfileEnabled = matureProfileEnabled
+        }
+        if user.derivedAgeBand != "adult" {
+            user.matureProfileEnabled = false
+            user.showAgeRestrictedLists = false
+        }
 
         if user.birthdayVisibility == "private" {
             try await BirthdayAlert.query(on: req.db).filter(\.$subject.$id == user.requireID()).delete()
         }
         try await user.save(on: req.db)
+        if body.matureProfileEnabled != nil || body.birthdayYear != nil || body.birthdayMonth != nil || body.birthdayDay != nil {
+            for wishlist in try await Wishlist.query(on: req.db).filter(\.$owner.$id == user.requireID()).all() {
+                try await AudienceService.sync(wishlistID: wishlist.requireID(), on: req.db)
+                try await ProfileAccessService.revokeIneligibleWishlistAccess(wishlistID: wishlist.requireID(), on: req.db)
+            }
+        }
         return try await details(for: user.requireID(), on: req.db)
     }
 
@@ -183,6 +212,33 @@ struct ProfileDetailsController: RouteCollection {
         return .init(enabled: true, reminderDaysBefore: days)
     }
 
+    func birthdayAlerts(req: Request) async throws -> [BirthdayAlertSubscriptionDTO] {
+        let subscriberID = try req.auth.require(User.self).requireID()
+        let alerts = try await BirthdayAlert.query(on: req.db)
+            .filter(\.$subscriber.$id == subscriberID)
+            .with(\.$subject)
+            .all()
+        var result: [BirthdayAlertSubscriptionDTO] = []
+        for alert in alerts {
+            let subject = alert.subject
+            guard try await ProfileAccessService.canViewBirthday(viewerID: subscriberID, target: subject, on: req.db),
+                  let month = subject.birthdayMonth,
+                  let day = subject.birthdayDay else {
+                try await alert.delete(on: req.db)
+                continue
+            }
+            let name = subject.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            result.append(.init(
+                userID: try subject.requireID(),
+                displayName: name?.isEmpty == false ? name! : "Your friend",
+                birthdayMonth: month,
+                birthdayDay: day,
+                reminderDaysBefore: alert.reminderDaysBefore
+            ))
+        }
+        return result
+    }
+
     private func subjectUser(req: Request) async throws -> User {
         guard let userID = req.parameters.get("userID", as: UUID.self),
               let subject = try await User.find(userID, on: req.db) else { throw Abort(.notFound) }
@@ -196,6 +252,7 @@ struct ProfileDetailsController: RouteCollection {
             .sort(\.$labelSearch, .ascending)
             .all()
         return .init(
+            matureProfileEnabled: user.isAgeRestrictedProfile,
             birthdayMonth: user.birthdayMonth,
             birthdayDay: user.birthdayDay,
             birthdayYear: user.birthdayYear,
@@ -230,5 +287,11 @@ struct ProfileDetailsController: RouteCollection {
         components.day = day
         guard let date = calendar.date(from: components) else { return false }
         return date <= calendar.startOfDay(for: now)
+    }
+
+    private static func age(year: Int, month: Int, day: Int) -> Int {
+        let calendar = Calendar(identifier: .gregorian)
+        guard let birthday = calendar.date(from: DateComponents(year: year, month: month, day: day)) else { return -1 }
+        return calendar.dateComponents([.year], from: birthday, to: Date()).year ?? -1
     }
 }

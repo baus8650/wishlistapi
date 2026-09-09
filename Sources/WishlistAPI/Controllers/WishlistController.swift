@@ -26,12 +26,14 @@ struct WishlistController: RouteCollection {
         let description: String?
         let customColorHex: String?
         let reminderDate: Date?
+        let matureContentEnabled: Bool
     }
 
     struct CreateRequest: Content {
         let title: String
         let visibility: String?
         let collaborationMode: String?
+        let matureContentEnabled: Bool?
     }
 
     struct UpdateRequest: Content {
@@ -56,6 +58,7 @@ struct WishlistController: RouteCollection {
         let description: String?
         let customColorHex: String?
         let reminderDate: Date?
+        let matureContentEnabled: Bool
     }
 
     struct UpdateSettingsRequest: Content {
@@ -76,6 +79,7 @@ struct WishlistController: RouteCollection {
         let clearCustomColor: Bool?
         let reminderDate: Date?
         let clearReminderDate: Bool?
+        let matureContentEnabled: Bool?
     }
 
     func boot(routes: any RoutesBuilder) throws {
@@ -107,6 +111,7 @@ struct WishlistController: RouteCollection {
             .sort(\.$position, .ascending)
             .sort(\.$createdAt, .descending)
             .all()
+            .filter { !$0.matureContentEnabled || user.derivedAgeBand == "adult" }
             .map { try summary($0, for: userId, isCollaborative: collaborativeIDs.contains(try $0.requireID())) }
     }
 
@@ -136,6 +141,12 @@ struct WishlistController: RouteCollection {
             if let mode = body.collaborationMode {
                 guard ["our_wishlist", "gift_planning"].contains(mode) else { throw Abort(.badRequest, reason: "Invalid collaboration mode.") }
                 wishlist.collaborationMode = mode
+            }
+            if body.matureContentEnabled == true {
+                guard user.derivedAgeBand == "adult" else {
+                    throw Abort(.badRequest, reason: "Only adult accounts can limit a list to adult viewers.")
+                }
+                wishlist.matureContentEnabled = true
             }
             let existing = try await Wishlist.query(on: db).filter(\.$owner.$id == userId).all()
             for item in existing {
@@ -238,6 +249,9 @@ struct WishlistController: RouteCollection {
 
         guard let wishlist = try await Wishlist.find(wishlistID, on: req.db),
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
+        guard !wishlist.matureContentEnabled || user.derivedAgeBand == "adult" else {
+            throw Abort(.forbidden, reason: "This list is not available to your account.")
+        }
 
         return .init(
             visibility: wishlist.visibility,
@@ -251,7 +265,8 @@ struct WishlistController: RouteCollection {
             colorTheme: wishlist.colorTheme,
             isArchived: wishlist.isArchived
             , description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
-            reminderDate: wishlist.reminderDate
+            reminderDate: wishlist.reminderDate,
+            matureContentEnabled: wishlist.matureContentEnabled
         )
     }
 
@@ -308,6 +323,19 @@ struct WishlistController: RouteCollection {
         }
         if body.clearReminderDate == true { wishlist.reminderDate = nil }
         else if let date = body.reminderDate { wishlist.reminderDate = date }
+        if let matureContentEnabled = body.matureContentEnabled {
+            if matureContentEnabled && user.derivedAgeBand != "adult" {
+                throw Abort(.badRequest, reason: "Only adult accounts can limit a list to adult viewers.")
+            }
+            if matureContentEnabled {
+                let collaborators = try await WishlistCollaborator.query(on: req.db)
+                    .filter(\.$wishlist.$id == wishlistID).with(\.$user).all()
+                guard collaborators.allSatisfy({ $0.user.derivedAgeBand == "adult" }) else {
+                    throw Abort(.conflict, reason: "Remove collaborators without an adult age range before limiting this list to adults.")
+                }
+            }
+            wishlist.matureContentEnabled = matureContentEnabled
+        }
         if let visibility = body.visibility {
             guard ["private", "public"].contains(visibility) else {
                 throw Abort(.badRequest, reason: "Visibility must be private or public.")
@@ -319,6 +347,8 @@ struct WishlistController: RouteCollection {
         }
 
         try await wishlist.save(on: req.db)
+        try await AudienceService.sync(wishlistID: wishlistID, on: req.db)
+        try await ProfileAccessService.revokeIneligibleWishlistAccess(wishlistID: wishlistID, on: req.db)
 
         return .init(
             visibility: wishlist.visibility,
@@ -332,7 +362,8 @@ struct WishlistController: RouteCollection {
             colorTheme: wishlist.colorTheme,
             isArchived: wishlist.isArchived
             , description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
-            reminderDate: wishlist.reminderDate
+            reminderDate: wishlist.reminderDate,
+            matureContentEnabled: wishlist.matureContentEnabled
         )
     }
 
@@ -349,6 +380,7 @@ struct WishlistController: RouteCollection {
         copy.colorTheme = source.colorTheme
         copy.customColorHex = source.customColorHex
         copy.collaborationMode = source.collaborationMode
+        copy.matureContentEnabled = source.matureContentEnabled
         try await copy.save(on: req.db)
 
         let memberships = try await WishlistItemMembership.query(on: req.db)
@@ -387,7 +419,8 @@ struct WishlistController: RouteCollection {
               reminderEnabled: wishlist.reminderEnabled, icon: wishlist.icon,
               colorTheme: wishlist.colorTheme, isArchived: wishlist.isArchived,
               description: wishlist.descriptionText, customColorHex: wishlist.customColorHex,
-              reminderDate: wishlist.reminderDate)
+              reminderDate: wishlist.reminderDate,
+              matureContentEnabled: wishlist.matureContentEnabled)
     }
 }
 

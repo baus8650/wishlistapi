@@ -7,6 +7,7 @@ struct AccountShareController: RouteCollection {
         let wishlistID: UUID
         let title: String
         let sharedByName: String
+        let matureContentEnabled: Bool
         let notificationsEnabled: Bool
         let removable: Bool
         let recipientDueDate: Date?
@@ -39,7 +40,8 @@ struct AccountShareController: RouteCollection {
     }
 
     func list(req: Request) async throws -> [SavedShare] {
-        let userID = try req.auth.require(User.self).requireID()
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
         let collaborativeWishlistIDs = Set(try await WishlistCollaborator.query(on: req.db)
             .all()
             .map(\.$wishlist.id))
@@ -50,16 +52,25 @@ struct AccountShareController: RouteCollection {
             }
             .all()
             .filter { !collaborativeWishlistIDs.contains($0.$wishlist.id) }
+            .filter { (!($0.wishlist.matureContentEnabled || $0.wishlist.owner.isAgeRestrictedProfile)) || user.canShowAgeRestrictedLists }
+
+        var accessibleViewers: [WishlistViewer] = []
+        for viewer in viewers {
+            if try await !ProfileAccessService.isBlocked(userID, viewer.wishlist.$owner.id, on: req.db) {
+                accessibleViewers.append(viewer)
+            }
+        }
 
         let socialViewerIDs = Set(try await SocialWishlistAccess.query(on: req.db).filter(\.$user.$id == userID).all().map(\.$viewer.id))
-        return try viewers.map { viewer in
+        return try accessibleViewers.map { viewer in
             try savedShare(viewer: viewer, wishlist: viewer.wishlist, owner: viewer.wishlist.owner, removable: !socialViewerIDs.contains(try viewer.requireID()))
         }
         .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
     func open(req: Request) async throws -> SavedShare {
-        let userID = try req.auth.require(User.self).requireID()
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
         guard let shareToken = req.parameters.get("shareToken") else {
             throw Abort(.badRequest, reason: "Missing share token.")
         }
@@ -73,6 +84,12 @@ struct AccountShareController: RouteCollection {
         let wishlist = try await link.$wishlist.get(on: req.db)
         let wishlistID = try wishlist.requireID()
         let owner = try await wishlist.$owner.get(on: req.db)
+        guard try await !ProfileAccessService.isBlocked(userID, owner.requireID(), on: req.db) else {
+            throw Abort(.notFound)
+        }
+        guard (!wishlist.matureContentEnabled && !owner.isAgeRestrictedProfile) || user.derivedAgeBand == "adult" else {
+            throw Abort(.forbidden, reason: "This content is not available to your account.")
+        }
 
         if let existing = try await WishlistViewer.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistID)
@@ -135,19 +152,29 @@ struct AccountShareController: RouteCollection {
     }
 
     func settings(req: Request) async throws -> SavedShare {
-        let userID = try req.auth.require(User.self).requireID()
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
         guard let shareID = req.parameters.get("accountShareID", as: UUID.self),
               let viewer = try await WishlistViewer.query(on: req.db).filter(\.$id == shareID).filter(\.$user.$id == userID)
                 .with(\.$wishlist) { $0.with(\.$owner) }.first() else { throw Abort(.notFound) }
+        guard (!(viewer.wishlist.matureContentEnabled || viewer.wishlist.owner.isAgeRestrictedProfile) || user.derivedAgeBand == "adult"),
+              try await !ProfileAccessService.isBlocked(userID, viewer.wishlist.$owner.id, on: req.db) else {
+            throw Abort(.forbidden, reason: "This content is not available to your account.")
+        }
         let removable = try await SocialWishlistAccess.query(on: req.db).filter(\.$viewer.$id == shareID).first() == nil
         return try savedShare(viewer: viewer, wishlist: viewer.wishlist, owner: viewer.wishlist.owner, removable: removable)
     }
 
     func updateSettings(req: Request) async throws -> SavedShare {
-        let userID = try req.auth.require(User.self).requireID()
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
         guard let shareID = req.parameters.get("accountShareID", as: UUID.self),
               let viewer = try await WishlistViewer.query(on: req.db).filter(\.$id == shareID).filter(\.$user.$id == userID)
                 .with(\.$wishlist) { $0.with(\.$owner) }.first() else { throw Abort(.notFound) }
+        guard (!(viewer.wishlist.matureContentEnabled || viewer.wishlist.owner.isAgeRestrictedProfile) || user.derivedAgeBand == "adult"),
+              try await !ProfileAccessService.isBlocked(userID, viewer.wishlist.$owner.id, on: req.db) else {
+            throw Abort(.forbidden, reason: "This content is not available to your account.")
+        }
         let body = try req.content.decode(SettingsRequest.self)
         if let value = body.notificationsEnabled { viewer.notificationsEnabled = value }
         if body.clearRecipientDueDate == true { viewer.recipientDueDate = nil }
@@ -168,6 +195,7 @@ struct AccountShareController: RouteCollection {
             wishlistID: try wishlist.requireID(),
             title: wishlist.title,
             sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName,
+            matureContentEnabled: wishlist.matureContentEnabled,
             notificationsEnabled: viewer.notificationsEnabled,
             removable: removable,
             recipientDueDate: viewer.recipientDueDate,

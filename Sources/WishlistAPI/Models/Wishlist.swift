@@ -68,6 +68,11 @@ final class Wishlist: Model, Content {
     @Field(key: "auto_lock_on_purchase")
     var autoLockOnPurchase: Bool
 
+    /// Optional owner-controlled content suitability flag. When enabled,
+    /// public access is limited to viewers whose account is 18+.
+    @Field(key: "mature_content_enabled")
+    var matureContentEnabled: Bool
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 
@@ -98,6 +103,7 @@ final class Wishlist: Model, Content {
         self.allowMultiplePurchases = allowMultiplePurchases
         self.allowNotes = allowNotes
         self.autoLockOnPurchase = autoLockOnPurchase
+        self.matureContentEnabled = false
     }
 }
 

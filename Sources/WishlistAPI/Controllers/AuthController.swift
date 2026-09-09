@@ -331,10 +331,16 @@ struct AuthController: RouteCollection {
         }
 
         let user = try await reset.$user.get(on: req.db)
-        user.passwordHash = try Bcrypt.hash(body.password)
-        try await user.save(on: req.db)
-        reset.usedAt = Date()
-        try await reset.save(on: req.db)
+        try await req.db.transaction { database in
+            user.passwordHash = try Bcrypt.hash(body.password)
+            user.authenticationVersion += 1
+            try await user.save(on: database)
+            try await PasswordResetToken.query(on: database)
+                .filter(\.$user.$id == user.requireID())
+                .filter(\.$usedAt == nil)
+                .set(\.$usedAt, to: Date())
+                .update()
+        }
 
         return PasswordResetMessage(message: "Your password has been updated. You can now sign in.")
     }
@@ -534,7 +540,7 @@ struct AuthController: RouteCollection {
     private func tokenResponse(for user: User, req: Request) async throws -> TokenResponse {
         let userID = try user.requireID()
         let exp = ExpirationClaim(value: Date().addingTimeInterval(TimeInterval(Self.accessTokenTTLSeconds)))
-        let payload = AccessTokenPayload(sub: .init(value: userID.uuidString), exp: exp)
+        let payload = AccessTokenPayload(sub: .init(value: userID.uuidString), exp: exp, ver: user.authenticationVersion)
         return TokenResponse(
             accessToken: try await req.jwt.sign(payload),
             tokenType: "Bearer",

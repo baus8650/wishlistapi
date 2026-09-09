@@ -342,11 +342,24 @@ struct SocialController: RouteCollection {
 
     private func revokeSocialSharing(between first: UUID, and second: UUID, on db: any Database) async throws {
         for (owner, formerFriend) in [(first, second), (second, first)] {
+            let ownedWishlistIDs = try await Wishlist.query(on: db)
+                .filter(\.$owner.$id == owner).all().compactMap(\.id)
             for member in try await FriendGroupMember.query(on: db).filter(\.$user.$id == formerFriend).all() {
                 if let group = try await FriendGroup.find(member.$group.id, on: db), group.$owner.id == owner { try await member.delete(on: db) }
             }
             for grant in try await WishlistAudienceGrant.query(on: db).filter(\.$user.$id == formerFriend).all() {
                 if let wishlist = try await Wishlist.find(grant.$wishlist.id, on: db), wishlist.$owner.id == owner { try await grant.delete(on: db) }
+            }
+            if !ownedWishlistIDs.isEmpty {
+                try await WishlistCollaborator.query(on: db)
+                    .filter(\.$wishlist.$id ~~ ownedWishlistIDs)
+                    .filter(\.$user.$id == formerFriend)
+                    .delete()
+                let viewers = try await WishlistViewer.query(on: db)
+                    .filter(\.$wishlist.$id ~~ ownedWishlistIDs)
+                    .filter(\.$user.$id == formerFriend)
+                    .all()
+                for viewer in viewers { try await viewer.delete(on: db) }
             }
             try await AudienceService.syncAllOwnedWishlists(ownerID: owner, on: db)
         }

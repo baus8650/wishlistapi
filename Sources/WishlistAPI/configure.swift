@@ -127,6 +127,11 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateProfileDetails())
     app.migrations.add(AddAgeSafetyFields())
     app.migrations.add(AddBirthdayYearToUser())
+    app.migrations.add(AddExplicitMatureContentControls())
+    app.migrations.add(AddAgeRestrictedListVisibilityPreference())
+    app.migrations.add(AddAdultConfirmationToWishlistViewer())
+    app.migrations.add(AddAuthenticationVersion())
+    app.migrations.add(AddContentTargetsToUserReports())
 
     // MARK: Routes
     try routes(app)

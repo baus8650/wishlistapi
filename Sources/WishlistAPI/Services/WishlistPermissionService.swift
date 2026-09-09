@@ -3,14 +3,17 @@ import Vapor
 
 enum WishlistPermissionService {
     static func canEdit(wishlistID: UUID, userID: UUID, on db: any Database) async throws -> Bool {
-        if try await Wishlist.query(on: db)
-            .filter(\.$id == wishlistID)
-            .filter(\.$owner.$id == userID)
-            .first() != nil { return true }
-        return try await WishlistCollaborator.query(on: db)
+        guard let wishlist = try await Wishlist.find(wishlistID, on: db),
+              let user = try await User.find(userID, on: db) else { return false }
+        if wishlist.$owner.id == userID {
+            return !wishlist.matureContentEnabled || user.derivedAgeBand == "adult"
+        }
+        guard try await WishlistCollaborator.query(on: db)
             .filter(\.$wishlist.$id == wishlistID)
             .filter(\.$user.$id == userID)
-            .first() != nil
+            .first() != nil else { return false }
+        guard !wishlist.matureContentEnabled || user.derivedAgeBand == "adult" else { return false }
+        return try await !ProfileAccessService.isBlocked(userID, wishlist.$owner.id, on: db)
     }
 
     static func editableWishlist(req: Request) async throws -> Wishlist {
@@ -19,6 +22,10 @@ enum WishlistPermissionService {
               let wishlist = try await Wishlist.find(wishlistID, on: req.db),
               try await canEdit(wishlistID: wishlistID, userID: userID, on: req.db) else {
             throw Abort(.notFound)
+        }
+        if wishlist.matureContentEnabled,
+           try req.auth.require(User.self).derivedAgeBand != "adult" {
+            throw Abort(.forbidden, reason: "This list is not available to your account.")
         }
         return wishlist
     }

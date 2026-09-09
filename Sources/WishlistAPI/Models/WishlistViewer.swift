@@ -25,6 +25,12 @@ final class WishlistViewer: Model, Content {
     @OptionalField(key: "viewer_token_hash")
     var viewerTokenHash: String?
 
+    /// Anonymous guests may confirm that they are 18+ for an age-restricted
+    /// share link. The confirmation is intentionally tied to this viewer
+    /// session rather than the share token itself.
+    @OptionalField(key: "adult_confirmed_at")
+    var adultConfirmedAt: Date?
+
     @OptionalField(key: "display_name")
     var displayName: String?
 
@@ -58,6 +64,7 @@ final class WishlistViewer: Model, Content {
         self.id = id
         self.$wishlist.id = wishlistId
         self.viewerTokenHash = viewerTokenHash
+        self.adultConfirmedAt = nil
         self.displayName = displayName
         self.notificationsEnabled = true
         self.recipientReminderEnabled = false

@@ -42,7 +42,7 @@ struct NetworkController: RouteCollection {
             let id = try wishlist.requireID(), ownerID = wishlist.$owner.id
             guard !collaborativeIDs.contains(id) else { continue }
             guard let ownerUser = users.first(where: { $0.id == ownerID }),
-                  !ownerUser.isAgeRestrictedProfile || viewer.derivedAgeBand == "adult" else { continue }
+                  (!wishlist.matureContentEnabled && !ownerUser.isAgeRestrictedProfile) || viewer.canShowAgeRestrictedLists else { continue }
             guard let owner = owners[ownerID] else { continue }
             result[id] = .init(wishlistID: id, title: wishlist.title, owner: owner, access: "public", accountShareID: nil)
         }
@@ -53,6 +53,7 @@ struct NetworkController: RouteCollection {
             let wishlist = access.wishlist
             let id = try wishlist.requireID(), ownerID = wishlist.$owner.id
             guard !collaborativeIDs.contains(id) else { continue }
+            guard !wishlist.matureContentEnabled || viewer.canShowAgeRestrictedLists else { continue }
             guard let owner = owners[ownerID] else { continue }
             result[id] = .init(wishlistID: id, title: wishlist.title, owner: owner, access: "shared", accountShareID: access.$viewer.id)
         }

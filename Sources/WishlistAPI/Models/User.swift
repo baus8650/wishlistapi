@@ -48,10 +48,15 @@ final class User: Model {
     @Field(key: "age_band")
     var ageBand: String
 
-    /// Compatibility field. It is synchronized from the private birthday and
-    /// is not user-controlled.
+    /// Explicit opt-in for profiles that may contain adult-oriented content.
+    /// Only adult accounts may enable this setting.
     @Field(key: "mature_profile_enabled")
     var matureProfileEnabled: Bool
+
+    /// Adult accounts can choose whether adult-only lists appear in shared-list
+    /// collections. This is a display preference, not an access permission.
+    @Field(key: "show_age_restricted_lists")
+    var showAgeRestrictedLists: Bool
 
     /// Birthdays are private by default. The year is used only on the server to
     /// derive the account's age band and is never returned for another user.
@@ -79,6 +84,10 @@ final class User: Model {
     @Field(key: "has_lifetime_pro")
     var hasLifetimePro: Bool
 
+    /// Incremented when all existing sessions must be invalidated.
+    @Field(key: "authentication_version")
+    var authenticationVersion: Int
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 
@@ -98,9 +107,11 @@ final class User: Model {
         self.privacySetupCompleted = false
         self.ageBand = "unknown"
         self.matureProfileEnabled = false
+        self.showAgeRestrictedLists = false
         self.birthdayVisibility = "private"
         self.birthdaySetupCompleted = false
         self.hasLifetimePro = false
+        self.authenticationVersion = 0
     }
 
     var derivedAgeBand: String {
@@ -113,7 +124,8 @@ final class User: Model {
         return age >= 18 ? "adult" : "under_18"
     }
 
-    var isAgeRestrictedProfile: Bool { derivedAgeBand == "adult" }
+    var isAgeRestrictedProfile: Bool { matureProfileEnabled && derivedAgeBand == "adult" }
+    var canShowAgeRestrictedLists: Bool { derivedAgeBand == "adult" && showAgeRestrictedLists }
 }
 
 extension User {
@@ -129,6 +141,7 @@ extension User {
         let onboardingVersion: Int?
         let ageBand: String
         let matureProfileEnabled: Bool
+        let showAgeRestrictedLists: Bool
         let birthdayMonth: Int?
         let birthdayDay: Int?
         let birthdayVisibility: String
@@ -151,6 +164,7 @@ extension User {
             onboardingVersion: self.onboardingVersion,
             ageBand: self.derivedAgeBand,
             matureProfileEnabled: self.isAgeRestrictedProfile,
+            showAgeRestrictedLists: self.canShowAgeRestrictedLists,
             birthdayMonth: self.birthdayMonth,
             birthdayDay: self.birthdayDay,
             birthdayVisibility: self.birthdayVisibility,

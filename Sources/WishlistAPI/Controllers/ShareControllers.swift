@@ -52,6 +52,11 @@ struct RecipientShareController: RouteCollection {
         let wishlist: SharedWishlistPublic
         let items: [WishlistItem]
         let viewerToken: String
+        let requiresAdultConfirmation: Bool
+    }
+
+    struct ConfirmAdultShareRequest: Content {
+        let confirmedAdult: Bool
     }
 
     struct SharedWishlistPublic: Content {
@@ -103,6 +108,7 @@ struct RecipientShareController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         // Recipient: view list by share token (creates/returns viewerToken)
         routes.get("shares", ":shareToken", use: viewSharedWishlist)
+        routes.post("shares", ":shareToken", "confirm-adult", use: confirmAdultShare)
 
         // Recipient: get items + their state (requires viewer token)
         routes.get("shares", ":shareToken", "items", use: listItemsWithState)
@@ -118,6 +124,7 @@ struct RecipientShareController: RouteCollection {
     func listMentionCandidates(req: Request) async throws -> [SocialUserDTO] {
         let (wishlist, viewer) = try await resolveWishlistAndViewer(req: req)
         try await ensureDiscussionAccess(wishlist: wishlist, viewer: viewer, req: req)
+        guard viewer.$user.id != nil else { return [] }
         return try await MentionService.candidates(
             for: try wishlist.requireID(),
             excluding: viewer.$user.id,
@@ -161,12 +168,14 @@ struct RecipientShareController: RouteCollection {
         guard !message.isEmpty, message.count <= 1_000 else {
             throw Abort(.badRequest, reason: "Comments must be between 1 and 1,000 characters.")
         }
-        try await MentionService.validateMentions(
-            in: message,
-            wishlistID: try wishlist.requireID(),
-            actorID: viewer.$user.id,
-            on: req.db
-        )
+        if let actorID = viewer.$user.id {
+            try await MentionService.validateMentions(
+                in: message,
+                wishlistID: try wishlist.requireID(),
+                actorID: actorID,
+                on: req.db
+            )
+        }
         let shareName = body.shareName == true
         if shareName {
             let submittedName = body.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -187,8 +196,8 @@ struct RecipientShareController: RouteCollection {
             shareName: shareName
         )
         try await comment.save(on: req.db)
-        do {
-            let actorID = viewer.$user.id
+        if let actorID = viewer.$user.id {
+          do {
             let configuredName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
             let actorName = configuredName?.isEmpty == false ? configuredName! : "Someone"
             try await MentionService.notifyNewMentions(
@@ -201,8 +210,9 @@ struct RecipientShareController: RouteCollection {
                 client: req.client,
                 logger: req.logger
             )
-        } catch {
+          } catch {
             req.logger.warning("Comment was saved, but mention notifications could not be created: \(error)")
+          }
         }
         return .init(
             id: try comment.requireID(),
@@ -231,63 +241,48 @@ struct RecipientShareController: RouteCollection {
 
     // MARK: Recipient views shared wishlist (creates viewer token silently)
     func viewSharedWishlist(req: Request) async throws -> ShareViewResponse {
-        guard let shareToken = req.parameters.get("shareToken") else {
-            throw Abort(.badRequest, reason: "Missing share token.")
+        let (wishlist, owner, viewer, viewerToken) = try await resolveShareForGuest(req: req, createViewerIfNeeded: true)
+        let wishlistID = try wishlist.requireID()
+        let requiresAdultConfirmation = requiresAdultConfirmation(for: wishlist, owner: owner)
+        let guestConfirmed = isRecentAdultConfirmation(viewer.adultConfirmedAt)
+        let account = req.auth.get(User.self)
+        if requiresAdultConfirmation, let account, account.derivedAgeBand != "adult" {
+            throw Abort(.forbidden, reason: "This content is not available to your account.")
         }
-
-        let linkHash = Tokens.sha256Hex(shareToken)
-
-        guard let link = try await WishlistShareLink.query(on: req.db)
-            .filter(\.$tokenHash == linkHash)
-            .first()
-        else { throw Abort(.notFound) }
-
-        let wishlist = try await link.$wishlist.get(on: req.db)
-        let wishlistId = try wishlist.requireID()
-        let owner = try await wishlist.$owner.get(on: req.db)
-        let configuredName = owner.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackName = owner.email.split(separator: "@", maxSplits: 1).first.map(String.init) ?? "Someone"
-        let publicWishlist = SharedWishlistPublic(
-            id: wishlistId,
-            title: wishlist.title,
-            sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName
+        let contentAllowed = !requiresAdultConfirmation || account?.derivedAgeBand == "adult" || guestConfirmed
+        let items = try await sharedItems(
+            wishlistID: wishlistID,
+            on: req.db,
+            includeContent: contentAllowed
         )
 
-        let items = try await WishlistItemMembership.query(on: req.db)
-            .filter(\.$wishlist.$id == wishlistId)
-            .sort(\.$position, .ascending)
-            .with(\.$item)
-            .all()
-            .map(\.item)
+        return .init(
+            wishlist: try publicWishlist(wishlist: wishlist, owner: owner, includeIdentifyingContent: contentAllowed),
+            items: items,
+            viewerToken: viewerToken,
+            requiresAdultConfirmation: requiresAdultConfirmation && account == nil && !guestConfirmed
+        )
+    }
 
-        // Viewer token comes from header if they already have it
-        let headerToken = req.headers.first(name: "X-Viewer-Token")
+    func confirmAdultShare(req: Request) async throws -> ShareViewResponse {
+        let body = try req.content.decode(ConfirmAdultShareRequest.self)
+        guard body.confirmedAdult else {
+            throw Abort(.forbidden, reason: "This list is available only to adults 18 and older.")
+        }
 
-        if let existingToken = headerToken, !existingToken.isEmpty {
-            let viewerHash = Tokens.sha256Hex(existingToken)
-            let existingViewer = try await WishlistViewer.query(on: req.db)
-                .filter(\.$wishlist.$id == wishlistId)
-                .filter(\.$viewerTokenHash == viewerHash)
-                .first()
-
-            if existingViewer != nil {
-                return .init(wishlist: publicWishlist, items: items, viewerToken: existingToken)
+        let (wishlist, owner, viewer, _) = try await resolveShareForGuest(req: req)
+        guard requiresAdultConfirmation(for: wishlist, owner: owner) else {
+            return try await viewSharedWishlist(req: req)
+        }
+        if let account = req.auth.get(User.self) {
+            guard account.derivedAgeBand == "adult" else {
+                throw Abort(.forbidden, reason: "This content is not available to your account.")
             }
+            return try await viewSharedWishlist(req: req)
         }
-
-        // Otherwise create a new anonymous viewer (no display name yet)
-        let viewerToken = try Tokens.randomURLSafeToken()
-        let viewerHash = Tokens.sha256Hex(viewerToken)
-
-        let viewer = WishlistViewer(
-            wishlistId: wishlistId,
-            viewerTokenHash: viewerHash,
-            displayName: nil,
-            userId: nil
-        )
+        viewer.adultConfirmedAt = Date()
         try await viewer.save(on: req.db)
-
-        return .init(wishlist: publicWishlist, items: items, viewerToken: viewerToken)
+        return try await viewSharedWishlist(req: req)
     }
 
     // MARK: Recipient lists items + their state
@@ -499,11 +494,11 @@ struct RecipientShareController: RouteCollection {
             try await viewer.save(on: req.db)
         }
 
-        if let note = body.note, wishlist.allowNotes {
+        if let note = body.note, wishlist.allowNotes, let actorID = viewer.$user.id {
             try await MentionService.validateMentions(
                 in: note,
                 wishlistID: wishlistId,
-                actorID: viewer.$user.id,
+                actorID: actorID,
                 on: req.db
             )
         }
@@ -516,7 +511,7 @@ struct RecipientShareController: RouteCollection {
             if wishlist.allowNotes, let note = body.note { state.note = note }
             if let shareName = body.shareName { state.shareName = shareName }
             try await state.save(on: req.db)
-            if let note = body.note {
+            if let note = body.note, let actorID = viewer.$user.id {
                 do {
                     let configuredName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
                     let actorName = configuredName?.isEmpty == false ? configuredName! : "Someone"
@@ -524,7 +519,7 @@ struct RecipientShareController: RouteCollection {
                         in: note,
                         previousText: previousNote,
                         wishlistID: wishlistId,
-                        actorID: viewer.$user.id,
+                        actorID: actorID,
                         actorName: actorName,
                         context: "in an item note.",
                         on: req.db,
@@ -563,14 +558,14 @@ struct RecipientShareController: RouteCollection {
             let shareName = body.shareName ?? false
             let newState = ItemViewerState(itemId: itemID, viewerId: viewerId, purchased: purchased, purchasedQuantity: purchasedQuantity, note: wishlist.allowNotes ? body.note : nil, shareName: shareName)
             try await newState.save(on: req.db)
-            if let note = body.note {
+            if let note = body.note, let actorID = viewer.$user.id {
                 do {
                     let configuredName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
                     let actorName = configuredName?.isEmpty == false ? configuredName! : "Someone"
                     try await MentionService.notifyNewMentions(
                         in: note,
                         wishlistID: wishlistId,
-                        actorID: viewer.$user.id,
+                        actorID: actorID,
                         actorName: actorName,
                         context: "in an item note.",
                         on: req.db,
@@ -605,6 +600,89 @@ struct RecipientShareController: RouteCollection {
     }
 
     // MARK: Helpers
+    private func resolveShareForGuest(
+        req: Request,
+        createViewerIfNeeded: Bool = false
+    ) async throws -> (wishlist: Wishlist, owner: User, viewer: WishlistViewer, viewerToken: String) {
+        guard let shareToken = req.parameters.get("shareToken") else {
+            throw Abort(.badRequest, reason: "Missing share token.")
+        }
+
+        guard let link = try await WishlistShareLink.query(on: req.db)
+            .filter(\.$tokenHash == Tokens.sha256Hex(shareToken))
+            .first()
+        else { throw Abort(.notFound) }
+
+        let wishlist = try await link.$wishlist.get(on: req.db)
+        let owner = try await wishlist.$owner.get(on: req.db)
+        let wishlistID = try wishlist.requireID()
+        let suppliedToken = req.headers.first(name: "X-Viewer-Token")
+
+        if let account = req.auth.get(User.self),
+           try await !ProfileAccessService.canViewWishlist(viewer: account, wishlist: wishlist, owner: owner, on: req.db) {
+            throw Abort(.notFound)
+        }
+
+        if let suppliedToken, !suppliedToken.isEmpty,
+           let viewer = try await WishlistViewer.query(on: req.db)
+            .filter(\.$wishlist.$id == wishlistID)
+            .filter(\.$viewerTokenHash == Tokens.sha256Hex(suppliedToken))
+            .first() {
+            return (wishlist, owner, viewer, suppliedToken)
+        }
+
+        guard createViewerIfNeeded else {
+            throw Abort(.unauthorized, reason: "Missing or invalid viewer token.")
+        }
+
+        let viewerToken = try Tokens.randomURLSafeToken()
+        let viewer = WishlistViewer(
+            wishlistId: wishlistID,
+            viewerTokenHash: Tokens.sha256Hex(viewerToken),
+            displayName: nil,
+            userId: req.auth.get(User.self)?.id
+        )
+        try await viewer.save(on: req.db)
+        return (wishlist, owner, viewer, viewerToken)
+    }
+
+    private func publicWishlist(wishlist: Wishlist, owner: User, includeIdentifyingContent: Bool = true) throws -> SharedWishlistPublic {
+        guard includeIdentifyingContent else {
+            return .init(id: try wishlist.requireID(), title: "Age-limited wishlist", sharedByName: "Hushful member")
+        }
+        let configuredName = owner.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackName = owner.email.split(separator: "@", maxSplits: 1).first.map(String.init) ?? "Someone"
+        return .init(
+            id: try wishlist.requireID(),
+            title: wishlist.title,
+            sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName
+        )
+    }
+
+    private func sharedItems(
+        wishlistID: UUID,
+        on db: any Database,
+        includeContent: Bool
+    ) async throws -> [WishlistItem] {
+        guard includeContent else { return [] }
+        return try await WishlistItemMembership.query(on: db)
+            .filter(\.$wishlist.$id == wishlistID)
+            .sort(\.$position, .ascending)
+            .with(\.$item)
+            .all()
+            .map(\.item)
+    }
+
+    private func requiresAdultConfirmation(for wishlist: Wishlist, owner: User) -> Bool {
+        wishlist.matureContentEnabled || owner.isAgeRestrictedProfile
+    }
+
+    private func isRecentAdultConfirmation(_ date: Date?) -> Bool {
+        guard let date else { return false }
+        let now = Date()
+        return date <= now && date >= now.addingTimeInterval(-30 * 24 * 60 * 60)
+    }
+
     private func namedPurchasers(
         in states: [ItemViewerState],
         excluding viewerID: UUID,
@@ -652,34 +730,46 @@ struct RecipientShareController: RouteCollection {
                 .first() else {
                 throw Abort(.notFound)
             }
-            return (try await viewer.$wishlist.get(on: req.db), viewer)
+            let wishlist = try await viewer.$wishlist.get(on: req.db)
+            let owner = try await wishlist.$owner.get(on: req.db)
+            guard try await ProfileAccessService.canViewWishlist(viewer: user, wishlist: wishlist, owner: owner, on: req.db) else {
+                throw Abort(.notFound)
+            }
+            try await ensureAgeAccess(wishlist: wishlist, user: user, includeOwnerProfile: true, req: req)
+            return (wishlist, viewer)
         }
 
-        guard let shareToken = req.parameters.get("shareToken") else {
-            throw Abort(.badRequest, reason: "Missing share token.")
-        }
-        let linkHash = Tokens.sha256Hex(shareToken)
+        let (wishlist, _, viewer, _) = try await resolveShareForGuest(req: req)
 
-        guard let link = try await WishlistShareLink.query(on: req.db)
-            .filter(\.$tokenHash == linkHash)
-            .first()
-        else { throw Abort(.notFound) }
-
-        let wishlist = try await link.$wishlist.get(on: req.db)
-        let wishlistId = try wishlist.requireID()
-
-        guard let viewerToken = req.headers.first(name: "X-Viewer-Token"), !viewerToken.isEmpty else {
-            throw Abort(.unauthorized, reason: "Missing X-Viewer-Token.")
-        }
-        let viewerHash = Tokens.sha256Hex(viewerToken)
-
-        guard let viewer = try await WishlistViewer.query(on: req.db)
-            .filter(\.$wishlist.$id == wishlistId)
-            .filter(\.$viewerTokenHash == viewerHash)
-            .first()
-        else { throw Abort(.unauthorized, reason: "Invalid viewer token.") }
+        try await ensureAgeAccess(
+            wishlist: wishlist,
+            user: nil,
+            includeOwnerProfile: true,
+            guestAdultConfirmedAt: viewer.adultConfirmedAt,
+            req: req
+        )
 
         return (wishlist, viewer)
+    }
+
+    private func ensureAgeAccess(
+        wishlist: Wishlist,
+        user: User?,
+        includeOwnerProfile: Bool = false,
+        guestAdultConfirmedAt: Date? = nil,
+        req: Request
+    ) async throws {
+        let owner = try await wishlist.$owner.get(on: req.db)
+        guard wishlist.matureContentEnabled || (includeOwnerProfile && owner.isAgeRestrictedProfile) else { return }
+        if let user {
+            guard user.derivedAgeBand == "adult" else {
+                throw Abort(.forbidden, reason: "This content is not available to your account.")
+            }
+            return
+        }
+        guard isRecentAdultConfirmation(guestAdultConfirmedAt) else {
+            throw Abort(.forbidden, reason: "This content is available only to adults 18 and older.")
+        }
     }
 
     private func ensureDiscussionAccess(wishlist: Wishlist, viewer: WishlistViewer, req: Request) async throws {
@@ -731,11 +821,17 @@ struct OwnerShareController: RouteCollection {
             throw Abort(.badRequest, reason: "Invalid wishlistID.")
         }
 
-        guard let _ = try await Wishlist.query(on: req.db)
+        guard let wishlist = try await Wishlist.query(on: req.db)
             .filter(\.$id == wishlistID)
             .filter(\.$owner.$id == userId)
             .first()
         else { throw Abort(.notFound) }
+
+        if wishlist.matureContentEnabled || user.matureProfileEnabled {
+            guard user.derivedAgeBand == "adult" else {
+                throw Abort(.badRequest, reason: "Only adult accounts can create links for age-limited content.")
+            }
+        }
 
         let shareToken = try Tokens.randomURLSafeToken()
         let tokenHash = Tokens.sha256Hex(shareToken)
@@ -798,6 +894,7 @@ struct OwnerShareController: RouteCollection {
         else { throw Abort(.notFound) }
 
         try await link.delete(on: req.db)
+        try await revokeGuestLinkAccess(wishlistID: wishlistID, on: req.db)
         return .noContent
     }
 
@@ -828,7 +925,24 @@ struct OwnerShareController: RouteCollection {
         let newToken = try Tokens.randomURLSafeToken()
         link.tokenHash = Tokens.sha256Hex(newToken)
         try await link.save(on: req.db)
+        try await revokeGuestLinkAccess(wishlistID: wishlistID, on: req.db)
 
         return .init(shareToken: newToken)
+    }
+
+    private func revokeGuestLinkAccess(wishlistID: UUID, on db: any Database) async throws {
+        let viewers = try await WishlistViewer.query(on: db)
+            .filter(\.$wishlist.$id == wishlistID)
+            .filter(\.$viewerTokenHash != nil)
+            .all()
+        for viewer in viewers {
+            guard let viewerID = viewer.id else { continue }
+            let hasSocialAccess = try await SocialWishlistAccess.query(on: db)
+                .filter(\.$viewer.$id == viewerID).first() != nil
+            let hasPublicAccess = try await PublicWishlistAccess.query(on: db)
+                .filter(\.$viewer.$id == viewerID).first() != nil
+            let isExplicit = hasSocialAccess || hasPublicAccess
+            if !isExplicit { try await viewer.delete(on: db) }
+        }
     }
 }

@@ -46,6 +46,7 @@ struct FriendProfileController: RouteCollection {
             .filter(\.$visibility == "public")
             .sort(\.$createdAt, .descending)
             .all()
+            .filter { !$0.matureContentEnabled || currentUser.canShowAgeRestrictedLists }
             .map { ProfileWishlistDTO(wishlistID: try $0.requireID(), title: $0.title, accountShareID: nil) }
 
         let sharedAccess: [SocialWishlistAccess]
@@ -57,6 +58,7 @@ struct FriendProfileController: RouteCollection {
         }
         let sharedWishlists = try sharedAccess
             .filter { $0.wishlist.$owner.id == otherID }
+            .filter { !$0.wishlist.matureContentEnabled || currentUser.canShowAgeRestrictedLists }
             .map { ProfileWishlistDTO(wishlistID: try $0.wishlist.requireID(), title: $0.wishlist.title, accountShareID: $0.$viewer.id) }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
 
@@ -99,7 +101,11 @@ struct FriendProfileController: RouteCollection {
                 .with(\.$owner)
                 .first() else { throw Abort(.notFound) }
 
-        guard !wishlist.owner.isAgeRestrictedProfile || currentUser.derivedAgeBand == "adult" else {
+        guard try await !ProfileAccessService.isBlocked(me, wishlist.$owner.id, on: req.db) else {
+            throw Abort(.notFound)
+        }
+
+        guard (!wishlist.matureContentEnabled && !wishlist.owner.isAgeRestrictedProfile) || currentUser.derivedAgeBand == "adult" else {
             throw Abort(.forbidden, reason: "This list is not available to your account.")
         }
 
@@ -155,6 +161,7 @@ struct FriendProfileController: RouteCollection {
         let fallbackName = owner.email.split(separator: "@", maxSplits: 1).first.map(String.init) ?? "Someone"
         return .init(id: try viewer.requireID(), wishlistID: try wishlist.requireID(), title: wishlist.title,
                      sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName,
+                     matureContentEnabled: wishlist.matureContentEnabled,
                      notificationsEnabled: viewer.notificationsEnabled, removable: false,
                      recipientDueDate: viewer.recipientDueDate,
                      recipientReminderEnabled: viewer.recipientReminderEnabled,

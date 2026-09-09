@@ -21,6 +21,12 @@ struct WishlistAudienceController: RouteCollection {
         let userIDs = Array(Set(body.userIDs)), groupIDs = Array(Set(body.groupIDs))
         for userID in userIDs {
             guard let friendship = try await acceptedFriendship(ownerID, userID, on: req.db), friendship.status == "accepted" else { throw Abort(.forbidden, reason: "Wishlists can only be shared directly with friends.") }
+            guard try await !ProfileAccessService.isBlocked(ownerID, userID, on: req.db) else { throw Abort(.forbidden, reason: "A blocked account cannot be added to a wishlist audience.") }
+            if wishlist.matureContentEnabled || (try await wishlist.$owner.get(on: req.db)).isAgeRestrictedProfile {
+                guard let recipient = try await User.find(userID, on: req.db), recipient.derivedAgeBand == "adult" else {
+                    throw Abort(.forbidden, reason: "Lists limited to adults can only be shared with adult accounts.")
+                }
+            }
         }
         for groupID in groupIDs {
             guard try await FriendGroup.query(on: req.db).filter(\.$id == groupID).filter(\.$owner.$id == ownerID).first() != nil else { throw Abort(.notFound, reason: "Friend group not found.") }
@@ -63,6 +69,14 @@ enum AudienceService {
         for groupID in grants.compactMap(\.$group.id) {
             desired.formUnion(try await FriendGroupMember.query(on: db).filter(\.$group.$id == groupID).all().map(\.$user.id))
         }
+        var eligible = Set<UUID>()
+        for userID in desired {
+            guard try await !ProfileAccessService.isBlocked(ownerID, userID, on: db),
+                  let user = try await User.find(userID, on: db),
+                  !(wishlist.matureContentEnabled || wishlist.owner.isAgeRestrictedProfile) || user.derivedAgeBand == "adult" else { continue }
+            eligible.insert(userID)
+        }
+        desired = eligible
         let existing = try await SocialWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).all()
         for access in existing where !desired.contains(access.$user.id) {
             if let viewer = try await WishlistViewer.find(access.$viewer.id, on: db) { try await viewer.delete(on: db) }

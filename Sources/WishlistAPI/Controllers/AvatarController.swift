@@ -10,15 +10,17 @@ struct AvatarController: RouteCollection {
     }
 
     func show(req: Request) async throws -> Response {
+        guard let viewer = req.auth.get(User.self) else { throw Abort(.unauthorized) }
         guard let userID = req.parameters.get("userID", as: UUID.self),
               let user = try await User.find(userID, on: req.db),
+              try await ProfileAccessService.canViewProfile(viewerID: viewer.requireID(), target: user, on: req.db),
               let data = user.avatarData,
               let contentType = user.avatarContentType else {
             throw Abort(.notFound)
         }
         var headers = HTTPHeaders()
         headers.replaceOrAdd(name: .contentType, value: contentType)
-        headers.replaceOrAdd(name: .cacheControl, value: "public, max-age=300")
+        headers.replaceOrAdd(name: .cacheControl, value: "private, no-store")
         return Response(status: .ok, headers: headers, body: .init(data: data))
     }
 }

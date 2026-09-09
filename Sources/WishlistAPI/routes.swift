@@ -8,6 +8,7 @@ private struct UpdateProfileRequest: Content {
     let friendRequestPolicy: String?
     let privacySetupCompleted: Bool?
     let onboardingVersion: Int?
+    let showAgeRestrictedLists: Bool?
 }
 
 func routes(_ app: Application) throws {
@@ -27,20 +28,17 @@ func routes(_ app: Application) throws {
     }
 
     app.get("share", ":shareToken") { req async -> Response in
-        Response(
-            status: .ok,
-            headers: ["Content-Type": "text/html; charset=utf-8"],
-            body: .init(string: """
-                <!doctype html>
-                <html lang="en">
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>Open in Hushful</title>
-                <body style="font-family: -apple-system, sans-serif; margin: 3rem auto; max-width: 32rem; padding: 1rem; text-align: center;">
-                    <h1>Hushful</h1>
-                    <p>Install or open Hushful on your iPhone to view this shared wishlist.</p>
-                </body>
-                </html>
-                """)
+        guard let shareToken = req.parameters.get("shareToken") else {
+            return Response(status: .badRequest)
+        }
+        // Keep the API host as an app-link target for installed clients, but
+        // send ordinary browsers to the responsive web guest experience.
+        // The token is URL-safe and remains in the path so the web app can
+        // perform the same server-side age gate as every other client.
+        let destination = "https://hushful.app/share/\(shareToken)"
+        return Response(
+            status: .seeOther,
+            headers: ["Location": destination]
         )
     }
 
@@ -57,10 +55,12 @@ func routes(_ app: Application) throws {
     try v1.register(collection: AuthController())
     try v1.register(collection: ProPurchaseController())
 
-    // Public sharing + recipient endpoints (anonymous-friendly)
-    try v1.register(collection: RecipientShareController())
-    try v1.register(collection: AvatarController())
-    try v1.register(collection: WishlistItemImageController())
+    // Public sharing endpoints accept anonymous guests, but opportunistically
+    // authenticate bearer tokens so account age and block rules still apply.
+    let optionallyAuthenticated = v1.grouped(UserTokenAuthenticator())
+    try optionallyAuthenticated.register(collection: RecipientShareController())
+    try optionallyAuthenticated.register(collection: AvatarController())
+    try optionallyAuthenticated.register(collection: WishlistItemImageController())
 
     // Protected routes (JWT)
     let protected = v1
@@ -121,6 +121,15 @@ func routes(_ app: Application) throws {
                 throw Abort(.badRequest, reason: "Choose your discovery and friend request settings before continuing.")
             }
             user.privacySetupCompleted = true
+        }
+        if let showAgeRestrictedLists = body.showAgeRestrictedLists {
+            guard !showAgeRestrictedLists || user.derivedAgeBand == "adult" else {
+                throw Abort(.badRequest, reason: "Only adult accounts can show lists intended for adults.")
+            }
+            user.showAgeRestrictedLists = showAgeRestrictedLists
+        }
+        if user.derivedAgeBand != "adult" {
+            user.showAgeRestrictedLists = false
         }
         if let onboardingVersion = body.onboardingVersion {
             guard onboardingVersion == 1,

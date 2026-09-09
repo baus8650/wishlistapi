@@ -10,6 +10,7 @@ import JWT
 struct AccessTokenPayload: JWTPayload {
     let sub: SubjectClaim
     let exp: ExpirationClaim
+    let ver: Int?
 
     func verify(using algorithm: some JWTAlgorithm) async throws {
         try exp.verifyNotExpired()

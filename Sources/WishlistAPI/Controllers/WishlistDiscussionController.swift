@@ -146,10 +146,14 @@ struct WishlistDiscussionController: RouteCollection {
         userID: UUID,
         on db: any Database
     ) async throws -> (Wishlist, WishlistViewer) {
-        guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
+        guard let viewer = try await User.find(userID, on: db),
+              let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
               let wishlist = try await Wishlist.find(wishlistID, on: db),
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userID, on: db) else {
             throw Abort(.notFound)
+        }
+        guard !wishlist.matureContentEnabled || viewer.derivedAgeBand == "adult" else {
+            throw Abort(.forbidden, reason: "This list is not available to your account.")
         }
 
         if let existing = try await WishlistViewer.query(on: db)

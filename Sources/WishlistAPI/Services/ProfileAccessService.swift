@@ -23,9 +23,43 @@ enum ProfileAccessService {
 
     static func canViewProfile(viewerID: UUID, target: User, on db: any Database) async throws -> Bool {
         guard let targetID = target.id, viewerID != targetID else { return true }
+        if target.isAgeRestrictedProfile {
+            guard let viewer = try await User.find(viewerID, on: db), viewer.derivedAgeBand == "adult" else {
+                return false
+            }
+        }
         guard try await !isBlocked(viewerID, targetID, on: db) else { return false }
         if target.isDiscoverable { return true }
         return try await areFriends(viewerID, targetID, on: db)
+    }
+
+    static func canViewWishlist(viewer: User, wishlist: Wishlist, owner: User, on db: any Database) async throws -> Bool {
+        guard let viewerID = viewer.id, let ownerID = owner.id else { return false }
+        if viewerID == ownerID { return true }
+        guard try await !isBlocked(viewerID, ownerID, on: db) else { return false }
+        if wishlist.matureContentEnabled || owner.isAgeRestrictedProfile {
+            return viewer.derivedAgeBand == "adult"
+        }
+        return true
+    }
+
+    /// Removes saved account access that has become invalid after an age,
+    /// profile, list, audience, or block change. Audience grants may remain,
+    /// but synchronization will not recreate access while it is ineligible.
+    static func revokeIneligibleWishlistAccess(wishlistID: UUID, on db: any Database) async throws {
+        guard let wishlist = try await Wishlist.query(on: db)
+            .filter(\.$id == wishlistID).with(\.$owner).first() else { return }
+        let viewers = try await WishlistViewer.query(on: db)
+            .filter(\.$wishlist.$id == wishlistID).with(\.$user).all()
+        for viewer in viewers {
+            guard let account = viewer.user,
+                  !(try await canViewWishlist(viewer: account, wishlist: wishlist, owner: wishlist.owner, on: db)) else { continue }
+            if let viewerID = viewer.id {
+                try await SocialWishlistAccess.query(on: db).filter(\.$viewer.$id == viewerID).delete()
+                try await PublicWishlistAccess.query(on: db).filter(\.$viewer.$id == viewerID).delete()
+            }
+            try await viewer.delete(on: db)
+        }
     }
 
     static func canViewBirthday(viewerID: UUID, target: User, on db: any Database) async throws -> Bool {

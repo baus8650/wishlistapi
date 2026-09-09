@@ -10,14 +10,56 @@ struct WishlistItemImageController: RouteCollection {
         guard let itemID = req.parameters.get("itemID", as: UUID.self),
               let image = try await WishlistItemImage.query(on: req.db)
                 .filter(\.$item.$id == itemID).first() else { throw Abort(.notFound) }
+        guard try await canView(itemID: itemID, req: req) else { throw Abort(.notFound) }
         return Response(
             status: .ok,
             headers: [
                 "Content-Type": image.contentType,
-                "Cache-Control": "public, max-age=3600"
+                "Cache-Control": "private, no-store"
             ],
             body: .init(data: image.data)
         )
+    }
+
+    private func canView(itemID: UUID, req: Request) async throws -> Bool {
+        let memberships = try await WishlistItemMembership.query(on: req.db)
+            .filter(\.$item.$id == itemID).with(\.$wishlist) { $0.with(\.$owner) }.all()
+        guard !memberships.isEmpty else { return false }
+
+        if let account = req.auth.get(User.self), let accountID = account.id {
+            for membership in memberships {
+                let wishlist = membership.wishlist
+                guard try await ProfileAccessService.canViewWishlist(viewer: account, wishlist: wishlist, owner: wishlist.owner, on: req.db) else { continue }
+                let isOwner = wishlist.$owner.id == accountID
+                let isCollaborator = try await WishlistCollaborator.query(on: req.db)
+                    .filter(\.$wishlist.$id == wishlist.id!)
+                    .filter(\.$user.$id == accountID)
+                    .first() != nil
+                let hasSavedAccess = try await WishlistViewer.query(on: req.db)
+                    .filter(\.$wishlist.$id == wishlist.id!)
+                    .filter(\.$user.$id == accountID)
+                    .first() != nil
+                if isOwner || wishlist.visibility == "public" || isCollaborator || hasSavedAccess {
+                    return true
+                }
+            }
+        }
+
+        guard let token = req.headers.first(name: "X-Viewer-Token"), !token.isEmpty else { return false }
+        let hash = Tokens.sha256Hex(token)
+        for membership in memberships {
+            let wishlist = membership.wishlist
+            guard let viewer = try await WishlistViewer.query(on: req.db)
+                .filter(\.$wishlist.$id == wishlist.id!)
+                .filter(\.$viewerTokenHash == hash).first() else { continue }
+            if wishlist.matureContentEnabled || wishlist.owner.isAgeRestrictedProfile {
+                guard let confirmed = viewer.adultConfirmedAt,
+                      confirmed <= Date(),
+                      confirmed >= Date().addingTimeInterval(-30 * 24 * 60 * 60) else { continue }
+            }
+            return true
+        }
+        return false
     }
 }
 

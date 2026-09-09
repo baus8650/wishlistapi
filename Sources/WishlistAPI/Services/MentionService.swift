@@ -56,7 +56,17 @@ enum MentionService {
         }
 
         eligibleIDs.remove(ownerID)
-        return eligibleIDs
+        let owner = try await wishlist.$owner.get(on: db)
+        var filtered = Set<UUID>()
+        for userID in eligibleIDs {
+            guard let user = try await User.find(userID, on: db),
+                  try await !ProfileAccessService.isBlocked(ownerID, userID, on: db) else { continue }
+            if wishlist.matureContentEnabled || owner.isAgeRestrictedProfile {
+                guard user.derivedAgeBand == "adult" else { continue }
+            }
+            filtered.insert(userID)
+        }
+        return filtered
     }
 
     static func collaborativeCandidates(

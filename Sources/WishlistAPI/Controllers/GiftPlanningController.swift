@@ -30,6 +30,9 @@ struct GiftPlanningController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userID, on: req.db) else {
             throw Abort(.notFound)
         }
+        guard !wishlist.matureContentEnabled || user.derivedAgeBand == "adult" else {
+            throw Abort(.forbidden, reason: "This list is not available to your account.")
+        }
 
         if let viewer = try await WishlistViewer.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistID)

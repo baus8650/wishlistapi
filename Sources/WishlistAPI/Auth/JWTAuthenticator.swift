@@ -13,7 +13,8 @@ struct UserTokenAuthenticator: AsyncBearerAuthenticator {
         let payload = try await req.jwt.verify(bearer.token, as: AccessTokenPayload.self)
 
         guard let userId = UUID(uuidString: payload.sub.value) else { return }
-        if let user = try await User.find(userId, on: req.db) {
+        if let user = try await User.find(userId, on: req.db),
+           (payload.ver ?? 0) == user.authenticationVersion {
             req.auth.login(user)
         }
     }
