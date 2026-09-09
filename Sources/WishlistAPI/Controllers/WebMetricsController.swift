@@ -6,6 +6,12 @@ struct WebMetricsController {
     struct Daily: Content { let date: String; let views: Int; let visitors: Int; let signups: Int }
     struct PathCount: Content { let path: String; let views: Int }
     struct Summary: Content { let days: Int; let views: Int; let visitors: Int; let signedInViews: Int; let totalAccounts: Int; let newAccounts: Int; let daily: [Daily]; let topPaths: [PathCount] }
+    struct AccountDirectoryEntry: Content {
+        let id: UUID
+        let displayName: String?
+        let email: String
+        let createdAt: Date?
+    }
 
     func track(req: Request) async throws -> HTTPStatus {
         let body = try req.content.decode(TrackRequest.self)
@@ -18,9 +24,7 @@ struct WebMetricsController {
     }
 
     func summary(req: Request) async throws -> Summary {
-        let user = try req.auth.require(User.self)
-        let allowed = Set((Environment.get("METRICS_ADMIN_EMAILS") ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
-        guard allowed.contains(user.email.lowercased()) else { throw Abort(.forbidden) }
+        try requireAdmin(req)
         let days = min(max(req.query[Int.self, at: "days"] ?? 30, 1), 365)
         let start = Calendar.current.date(byAdding: .day, value: -(days - 1), to: Calendar.current.startOfDay(for: Date()))!
         let events = try await WebMetricEvent.query(on: req.db).filter(\.$createdAt >= start).all()
@@ -36,5 +40,23 @@ struct WebMetricsController {
         }.sorted { $0.date < $1.date }
         let paths = Dictionary(grouping: events) { $0.path }.map { PathCount(path: $0.key, views: $0.value.count) }.sorted { $0.views > $1.views }.prefix(10)
         return .init(days: days, views: events.count, visitors: Set(events.map(\.visitorID)).count, signedInViews: events.filter { $0.signedIn }.count, totalAccounts: totalAccounts, newAccounts: recentAccounts.count, daily: daily, topPaths: Array(paths))
+    }
+
+    func accounts(req: Request) async throws -> [AccountDirectoryEntry] {
+        try requireAdmin(req)
+        let accounts = try await User.query(on: req.db)
+            .sort(\.$createdAt, .descending)
+            .all()
+        return try accounts.map {
+            .init(id: try $0.requireID(), displayName: $0.displayName, email: $0.email, createdAt: $0.createdAt)
+        }
+    }
+
+    private func requireAdmin(_ req: Request) throws {
+        let user = try req.auth.require(User.self)
+        let allowed = Set((Environment.get("METRICS_ADMIN_EMAILS") ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        guard allowed.contains(user.email.lowercased()) else { throw Abort(.forbidden) }
     }
 }
