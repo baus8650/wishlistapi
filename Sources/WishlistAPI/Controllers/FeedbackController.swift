@@ -65,6 +65,7 @@ struct FeedbackController: RouteCollection {
         )
 
         try await feedback.save(on: req.db)
+        await notifyAdmins(of: feedback, submittedBy: user, req: req)
 
         return try response(feedback, user)
     }
@@ -72,16 +73,7 @@ struct FeedbackController: RouteCollection {
     func list(req: Request) async throws -> [Response] {
         let admin = try req.auth.require(User.self)
 
-        let allowed = Set(
-            (Environment.get("METRICS_ADMIN_EMAILS") ?? "")
-                .split(separator: ",")
-                .map {
-                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                        .lowercased()
-                }
-        )
-
-        guard allowed.contains(admin.email.lowercased()) else {
+        guard adminEmails().contains(admin.email.lowercased()) else {
             throw Abort(.forbidden)
         }
 
@@ -93,6 +85,56 @@ struct FeedbackController: RouteCollection {
             .map {
                 try response($0, $0.user)
             }
+    }
+
+    private func notifyAdmins(
+        of feedback: UserFeedback,
+        submittedBy user: User,
+        req: Request
+    ) async {
+        let allowedEmails = adminEmails()
+        guard !allowedEmails.isEmpty else { return }
+
+        do {
+            let admins = try await User.query(on: req.db)
+                .all()
+                .filter { allowedEmails.contains($0.email.lowercased()) }
+            let userID = try user.requireID()
+            let sharedName = user.displayName?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let submitter = feedback.shareName && sharedName?.isEmpty == false
+                ? sharedName!
+                : nil
+            let summary = submitter.map {
+                "\($0) submitted \(feedback.category) feedback on \(feedback.platform)."
+            } ?? "New \(feedback.category) feedback was submitted on \(feedback.platform)."
+
+            for admin in admins {
+                try await ActivityService.create(
+                    userID: try admin.requireID(),
+                    actorID: userID,
+                    kind: "feedback_submitted",
+                    title: "New feedback received",
+                    message: summary,
+                    on: req.db,
+                    client: req.client,
+                    logger: req.logger
+                )
+            }
+        } catch {
+            req.logger.warning("Feedback was saved, but administrators could not be notified: \(error)")
+        }
+    }
+
+    private func adminEmails() -> Set<String> {
+        Set(
+            (Environment.get("METRICS_ADMIN_EMAILS") ?? "")
+                .split(separator: ",")
+                .map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                }
+        )
     }
 
     private func response(
