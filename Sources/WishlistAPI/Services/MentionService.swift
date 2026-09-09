@@ -14,53 +14,49 @@ enum MentionService {
         })
     }
 
-    /// Returns the account-linked people who can participate in this list's
-    /// shared recipient experience. Viewer rows are the source of truth for
-    /// both public lists that have been opened and privately shared lists.
+    /// Returns people who are eligible to be mentioned in a shared wishlist.
+    /// Public lists use accepted friends of the owner and collaborators;
+    /// private lists use explicit recipient access and collaborators.
     static func candidates(
         for wishlistID: UUID,
         excluding actorID: UUID? = nil,
         on db: any Database
     ) async throws -> [SocialUserDTO] {
-        let viewers = try await WishlistViewer.query(on: db)
-            .filter(\.$wishlist.$id == wishlistID)
-            .with(\.$user)
-            .all()
-
-        return viewers.compactMap { viewer in
-            guard let user = viewer.user,
-                  let id = user.id,
-                  id != actorID,
-                  let username = user.username,
-                  !username.isEmpty else { return nil }
-            return SocialUserDTO(
-                id: id,
-                username: username,
-                displayName: user.displayName,
-                hasAvatar: user.avatarData != nil
-            )
-        }
-        .reduce(into: [UUID: SocialUserDTO]()) { result, candidate in
-            result[candidate.id] = candidate
-        }
-        .values
-        .sorted { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
+        let eligibleIDs = try await eligibleUserIDs(for: wishlistID, on: db)
+            .subtracting(actorID.map { [$0] } ?? [])
+        return try await users(for: eligibleIDs, on: db)
     }
 
-    /// Returns the account IDs that make up a collaborative wishlist. Unlike
-    /// recipient viewers, these users can access a joint list even when the
-    /// list is using the private "our wishlist" mode.
-    static func collaborativeMemberIDs(
+    /// Returns account IDs that can be mentioned for this wishlist. The
+    /// primary owner is intentionally excluded from the result.
+    static func eligibleUserIDs(
         for wishlistID: UUID,
         on db: any Database
     ) async throws -> Set<UUID> {
         guard let wishlist = try await Wishlist.find(wishlistID, on: db) else { return [] }
         let ownerID = try await wishlist.$owner.get(on: db).requireID()
-        let collaboratorIDs = try await WishlistCollaborator.query(on: db)
+        let collaboratorIDs = Set(try await WishlistCollaborator.query(on: db)
             .filter(\.$wishlist.$id == wishlistID)
             .all()
-            .map(\.$user.id)
-        return Set([ownerID] + collaboratorIDs)
+            .map(\.$user.id))
+
+        var eligibleIDs = collaboratorIDs
+        if wishlist.visibility == "public" {
+            for principalID in collaboratorIDs.union([ownerID]) {
+                eligibleIDs.formUnion(try await acceptedFriendIDs(for: principalID, on: db))
+            }
+        } else {
+            // A linked viewer may have received access through an explicit
+            // audience grant or through an authenticated share link.
+            let viewerIDs = try await WishlistViewer.query(on: db)
+                .filter(\.$wishlist.$id == wishlistID)
+                .all()
+                .compactMap(\.$user.id)
+            eligibleIDs.formUnion(viewerIDs)
+        }
+
+        eligibleIDs.remove(ownerID)
+        return eligibleIDs
     }
 
     static func collaborativeCandidates(
@@ -68,16 +64,7 @@ enum MentionService {
         excluding actorID: UUID? = nil,
         on db: any Database
     ) async throws -> [SocialUserDTO] {
-        let memberIDs = try await collaborativeMemberIDs(for: wishlistID, on: db)
-        let users = try await User.query(on: db).all().filter { user in
-            guard let id = user.id else { return false }
-            return memberIDs.contains(id) && id != actorID
-        }
-        return users.compactMap { user in
-            guard let id = user.id, let username = user.username, !username.isEmpty else { return nil }
-            return SocialUserDTO(id: id, username: username, displayName: user.displayName, hasAvatar: user.avatarData != nil)
-        }
-        .sorted { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
+        try await candidates(for: wishlistID, excluding: actorID, on: db)
     }
 
     /// Rejects a mention of a known user who cannot access the list. Unknown
@@ -98,11 +85,9 @@ enum MentionService {
         guard !mentionedUsers.isEmpty else { return }
 
         let mentionedIDs = Set(mentionedUsers.compactMap(\.id))
-        let viewers = try await WishlistViewer.query(on: db)
-            .filter(\.$wishlist.$id == wishlistID)
-            .filter(\.$user.$id ~~ Array(mentionedIDs))
-            .all()
-        let eligibleIDs = Set(viewers.compactMap { $0.$user.id }).subtracting(actorID.map { [$0] } ?? [])
+        let eligibleIDs = (try await eligibleUserIDs(for: wishlistID, on: db))
+            .intersection(mentionedIDs)
+            .subtracting(actorID.map { [$0] } ?? [])
         try validateMentionedUsers(mentionedUsers, against: eligibleIDs, actorID: actorID)
     }
 
@@ -170,15 +155,15 @@ enum MentionService {
         guard !mentionedUsers.isEmpty else { return }
 
         let userIDs = Set(mentionedUsers.compactMap(\.id))
+        let ownerID = try await Wishlist.find(wishlistID, on: db)?.$owner.id
+        let excludedIDs = Set([actorID, ownerID].compactMap { $0 })
         let eligibleIDs: Set<UUID>
         if let eligibleUserIDs {
-            eligibleIDs = userIDs.intersection(eligibleUserIDs).filter { $0 != actorID }
+            eligibleIDs = userIDs.intersection(eligibleUserIDs).subtracting(excludedIDs)
         } else {
-            let viewers = try await WishlistViewer.query(on: db)
-                .filter(\.$wishlist.$id == wishlistID)
-                .filter(\.$user.$id ~~ Array(userIDs))
-                .all()
-            eligibleIDs = Set(viewers.compactMap { $0.$user.id }).filter { $0 != actorID }
+            eligibleIDs = userIDs
+                .intersection(try await MentionService.eligibleUserIDs(for: wishlistID, on: db))
+                .subtracting(excludedIDs)
         }
         guard !eligibleIDs.isEmpty else { return }
 
@@ -196,5 +181,36 @@ enum MentionService {
                 logger: logger
             )
         }
+    }
+
+    private static func acceptedFriendIDs(for userID: UUID, on db: any Database) async throws -> Set<UUID> {
+        let friendships = try await Friendship.query(on: db)
+            .filter(\.$status == "accepted")
+            .group(.or) { group in
+                group.group(.and) { $0.filter(\.$requester.$id == userID) }
+                group.group(.and) { $0.filter(\.$recipient.$id == userID) }
+            }
+            .all()
+
+        return Set(friendships.flatMap { [$0.$requester.id, $0.$recipient.id] }.filter { $0 != userID })
+    }
+
+    private static func users(for ids: Set<UUID>, on db: any Database) async throws -> [SocialUserDTO] {
+        guard !ids.isEmpty else { return [] }
+        return try await User.query(on: db)
+            .filter(\.$id ~~ Array(ids))
+            .all()
+            .compactMap { user in
+                guard let id = user.id,
+                      let username = user.username,
+                      !username.isEmpty else { return nil }
+                return SocialUserDTO(
+                    id: id,
+                    username: username,
+                    displayName: user.displayName,
+                    hasAvatar: user.avatarData != nil
+                )
+            }
+            .sorted { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
     }
 }

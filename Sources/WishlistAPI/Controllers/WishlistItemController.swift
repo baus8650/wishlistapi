@@ -350,13 +350,6 @@ struct WishlistItemController: RouteCollection {
     ) async {
         guard let note else { return }
         do {
-            let collaboratorIDs = try await WishlistCollaborator.query(on: req.db)
-                .filter(\.$wishlist.$id == wishlist.requireID())
-                .all()
-                .map(\.$user.id)
-            let eligibleUserIDs = collaboratorIDs.isEmpty
-                ? nil
-                : try await MentionService.collaborativeMemberIDs(for: wishlist.requireID(), on: req.db)
             try await MentionService.notifyNewMentions(
                 in: note,
                 previousText: previousText,
@@ -364,7 +357,6 @@ struct WishlistItemController: RouteCollection {
                 actorID: try actor.requireID(),
                 actorName: actor.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Someone",
                 context: "in an item note.",
-                eligibleUserIDs: eligibleUserIDs,
                 on: req.db,
                 client: req.client,
                 logger: req.logger
@@ -380,25 +372,12 @@ struct WishlistItemController: RouteCollection {
         actorID: UUID,
         on db: any Database
     ) async throws {
-        let collaboratorIDs = try await WishlistCollaborator.query(on: db)
-            .filter(\.$wishlist.$id == wishlist.requireID())
-            .all()
-            .map(\.$user.id)
-        if collaboratorIDs.isEmpty {
-            try await MentionService.validateMentions(
-                in: note,
-                wishlistID: try wishlist.requireID(),
-                actorID: actorID,
-                on: db
-            )
-        } else {
-            try await MentionService.validateMentions(
-                in: note,
-                allowedUserIDs: try await MentionService.collaborativeMemberIDs(for: try wishlist.requireID(), on: db),
-                actorID: actorID,
-                on: db
-            )
-        }
+        try await MentionService.validateMentions(
+            in: note,
+            wishlistID: try wishlist.requireID(),
+            actorID: actorID,
+            on: db
+        )
     }
 }
 
