@@ -110,6 +110,17 @@ struct RecipientShareController: RouteCollection {
         routes.get("shares", ":shareToken", "discussion", use: listDiscussion)
         routes.post("shares", ":shareToken", "discussion", use: createDiscussionComment)
         routes.delete("shares", ":shareToken", "discussion", ":commentID", use: deleteDiscussionComment)
+        routes.get("shares", ":shareToken", "mention-candidates", use: listMentionCandidates)
+    }
+
+    func listMentionCandidates(req: Request) async throws -> [SocialUserDTO] {
+        let (wishlist, viewer) = try await resolveWishlistAndViewer(req: req)
+        try await ensureDiscussionAccess(wishlist: wishlist, viewer: viewer, req: req)
+        return try await MentionService.candidates(
+            for: try wishlist.requireID(),
+            excluding: viewer.$user.id,
+            on: req.db
+        )
     }
 
     func listDiscussion(req: Request) async throws -> [DiscussionCommentResponse] {
@@ -148,6 +159,12 @@ struct RecipientShareController: RouteCollection {
         guard !message.isEmpty, message.count <= 1_000 else {
             throw Abort(.badRequest, reason: "Comments must be between 1 and 1,000 characters.")
         }
+        try await MentionService.validateMentions(
+            in: message,
+            wishlistID: try wishlist.requireID(),
+            actorID: viewer.$user.id,
+            on: req.db
+        )
         let shareName = body.shareName == true
         if shareName {
             let submittedName = body.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -168,6 +185,23 @@ struct RecipientShareController: RouteCollection {
             shareName: shareName
         )
         try await comment.save(on: req.db)
+        do {
+            let actorID = viewer.$user.id
+            let configuredName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let actorName = configuredName?.isEmpty == false ? configuredName! : "Someone"
+            try await MentionService.notifyNewMentions(
+                in: message,
+                wishlistID: try wishlist.requireID(),
+                actorID: actorID,
+                actorName: actorName,
+                context: "in a wishlist comment.",
+                on: req.db,
+                client: req.client,
+                logger: req.logger
+            )
+        } catch {
+            req.logger.warning("Comment was saved, but mention notifications could not be created: \(error)")
+        }
         return .init(
             id: try comment.requireID(),
             message: comment.message,
@@ -399,6 +433,7 @@ struct RecipientShareController: RouteCollection {
             .filter(\.$item.$id == itemID)
             .filter(\.$viewer.$id == viewerId)
             .first()
+        let previousNote = state?.note
 
         let desiredQuantity: Int? = body.purchasedQuantity ?? body.purchased.map {
             $0 ? max(state?.purchasedQuantity ?? 0, 1) : 0
@@ -441,6 +476,14 @@ struct RecipientShareController: RouteCollection {
             try await viewer.save(on: req.db)
         }
 
+        if let note = body.note, wishlist.allowNotes {
+            try await MentionService.validateMentions(
+                in: note,
+                wishlistID: wishlistId,
+                actorID: viewer.$user.id,
+                on: req.db
+            )
+        }
 
         if let state {
             if let desiredQuantity {
@@ -450,6 +493,25 @@ struct RecipientShareController: RouteCollection {
             if wishlist.allowNotes, let note = body.note { state.note = note }
             if let shareName = body.shareName { state.shareName = shareName }
             try await state.save(on: req.db)
+            if let note = body.note {
+                do {
+                    let configuredName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let actorName = configuredName?.isEmpty == false ? configuredName! : "Someone"
+                    try await MentionService.notifyNewMentions(
+                        in: note,
+                        previousText: previousNote,
+                        wishlistID: wishlistId,
+                        actorID: viewer.$user.id,
+                        actorName: actorName,
+                        context: "in an item note.",
+                        on: req.db,
+                        client: req.client,
+                        logger: req.logger
+                    )
+                } catch {
+                    req.logger.warning("Item state was saved, but note mention notifications could not be created: \(error)")
+                }
+            }
 
             // purchased by anyone (not just this viewer)
             let allStates = try await ItemViewerState.query(on: req.db).filter(\.$item.$id == itemID).all()
@@ -472,6 +534,24 @@ struct RecipientShareController: RouteCollection {
             let shareName = body.shareName ?? false
             let newState = ItemViewerState(itemId: itemID, viewerId: viewerId, purchased: purchased, purchasedQuantity: purchasedQuantity, note: wishlist.allowNotes ? body.note : nil, shareName: shareName)
             try await newState.save(on: req.db)
+            if let note = body.note {
+                do {
+                    let configuredName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let actorName = configuredName?.isEmpty == false ? configuredName! : "Someone"
+                    try await MentionService.notifyNewMentions(
+                        in: note,
+                        wishlistID: wishlistId,
+                        actorID: viewer.$user.id,
+                        actorName: actorName,
+                        context: "in an item note.",
+                        on: req.db,
+                        client: req.client,
+                        logger: req.logger
+                    )
+                } catch {
+                    req.logger.warning("Item state was saved, but note mention notifications could not be created: \(error)")
+                }
+            }
 
             let notes: [RecipientNote] = {
                 guard wishlist.allowNotes else { return [] }

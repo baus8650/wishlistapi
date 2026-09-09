@@ -30,6 +30,8 @@ struct NetworkController: RouteCollection {
             return (id, .init(id: id, username: username, displayName: user.displayName, hasAvatar: user.avatarData != nil))
         })
 
+        let collaborativeIDs = Set(try await WishlistCollaborator.query(on: req.db).all().map(\.$wishlist.id))
+
         var result: [UUID: NetworkWishlistDTO] = [:]
         let publicLists = try await Wishlist.query(on: req.db)
             .filter(\.$owner.$id ~~ friendIDs)
@@ -37,6 +39,7 @@ struct NetworkController: RouteCollection {
             .all()
         for wishlist in publicLists {
             let id = try wishlist.requireID(), ownerID = wishlist.$owner.id
+            guard !collaborativeIDs.contains(id) else { continue }
             guard let owner = owners[ownerID] else { continue }
             result[id] = .init(wishlistID: id, title: wishlist.title, owner: owner, access: "public", accountShareID: nil)
         }
@@ -46,6 +49,7 @@ struct NetworkController: RouteCollection {
         for access in shared where friendIDs.contains(access.wishlist.$owner.id) {
             let wishlist = access.wishlist
             let id = try wishlist.requireID(), ownerID = wishlist.$owner.id
+            guard !collaborativeIDs.contains(id) else { continue }
             guard let owner = owners[ownerID] else { continue }
             result[id] = .init(wishlistID: id, title: wishlist.title, owner: owner, access: "shared", accountShareID: access.$viewer.id)
         }

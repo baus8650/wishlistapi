@@ -32,6 +32,7 @@ struct AccountShareController: RouteCollection {
         routes.patch(":accountShareID", "settings", use: updateSettings)
         routes.get(":accountShareID", "items", use: recipient.listItemsWithState)
         routes.put(":accountShareID", "items", ":itemID", "state", use: recipient.upsertState)
+        routes.get(":accountShareID", "mention-candidates", use: recipient.listMentionCandidates)
         routes.get(":accountShareID", "discussion", use: recipient.listDiscussion)
         routes.post(":accountShareID", "discussion", use: recipient.createDiscussionComment)
         routes.delete(":accountShareID", "discussion", ":commentID", use: recipient.deleteDiscussionComment)
@@ -39,12 +40,16 @@ struct AccountShareController: RouteCollection {
 
     func list(req: Request) async throws -> [SavedShare] {
         let userID = try req.auth.require(User.self).requireID()
+        let collaborativeWishlistIDs = Set(try await WishlistCollaborator.query(on: req.db)
+            .all()
+            .map(\.$wishlist.id))
         let viewers = try await WishlistViewer.query(on: req.db)
             .filter(\.$user.$id == userID)
             .with(\.$wishlist) { wishlist in
                 wishlist.with(\.$owner)
             }
             .all()
+            .filter { !collaborativeWishlistIDs.contains($0.$wishlist.id) }
 
         let socialViewerIDs = Set(try await SocialWishlistAccess.query(on: req.db).filter(\.$user.$id == userID).all().map(\.$viewer.id))
         return try viewers.map { viewer in

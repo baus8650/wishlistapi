@@ -38,6 +38,7 @@ struct WishlistItemController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         // Owner-only endpoints (mounted under /wishlists)
         routes.get(":wishlistID", "items", use: listForWishlist)
+        routes.get(":wishlistID", "mention-candidates", use: mentionCandidates)
         routes.post(":wishlistID", "items", use: createForWishlist)
         routes.put(":wishlistID", "items", "order", use: reorder)
         routes.get(":wishlistID", "items", ":itemID", "links", use: links)
@@ -46,6 +47,15 @@ struct WishlistItemController: RouteCollection {
         routes.put(":wishlistID", "items", ":itemID", use: replace)
         routes.patch(":wishlistID", "items", ":itemID", use: update)
         routes.delete(":wishlistID", "items", ":itemID", use: delete)
+    }
+
+    func mentionCandidates(req: Request) async throws -> [SocialUserDTO] {
+        let userID = try req.auth.require(User.self).requireID()
+        guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
+              try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userID, on: req.db) else {
+            throw Abort(.notFound)
+        }
+        return try await MentionService.candidates(for: wishlistID, excluding: userID, on: req.db)
     }
 
     // PUT /wishlists/:wishlistID/items/:itemID
@@ -68,6 +78,7 @@ struct WishlistItemController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
 
         let body = try req.content.decode(CreateRequest.self)
+        let previousOwnerNote = item.ownerNote
         let title = body.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
             throw Abort(.badRequest, reason: "Title is required.")
@@ -78,6 +89,12 @@ struct WishlistItemController: RouteCollection {
         guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
         let itemType = try validatedType(body.itemType, url: body.url, goal: body.contributionGoal)
         if itemType == "cash_fund" { try ProAccessService.requirePro(user) }
+        try await MentionService.validateMentions(
+            in: body.ownerNote ?? "",
+            wishlistID: wishlistID,
+            actorID: userId,
+            on: req.db
+        )
 
         item.title = title
         item.url = body.url?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
@@ -90,6 +107,7 @@ struct WishlistItemController: RouteCollection {
         if let linked = body.linkedWishlistIDs {
             try await syncMemberships(item: item, userID: userId, requestedIDs: Set(linked + [wishlistID]), on: req.db)
         }
+        await notifyOwnerNoteMentions(body.ownerNote, previousText: previousOwnerNote, wishlist: wishlist, actor: user, req: req)
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item changed in “\(wishlist.title)”.", on: req.db, client: req.client, logger: req.logger)
         return item
     }
@@ -148,8 +166,15 @@ struct WishlistItemController: RouteCollection {
             itemType: itemType,
             contributionGoal: itemType == "cash_fund" ? body.contributionGoal : nil
         )
+        try await MentionService.validateMentions(
+            in: body.ownerNote ?? "",
+            wishlistID: wishlistID,
+            actorID: userId,
+            on: req.db
+        )
         try await item.save(on: req.db)
         try await syncMemberships(item: item, userID: userId, requestedIDs: Set((body.linkedWishlistIDs ?? []) + [wishlistID]), on: req.db)
+        await notifyOwnerNoteMentions(body.ownerNote, wishlist: wishlist, actor: user, req: req)
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "New wishlist item", message: "A new item was added to “\(wishlist.title)”.", on: req.db, client: req.client, logger: req.logger)
         return item
     }
@@ -210,6 +235,7 @@ struct WishlistItemController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
 
         let body = try req.content.decode(UpdateRequest.self)
+        let previousOwnerNote = item.ownerNote
         if body.itemType == "cash_fund" || item.itemType == "cash_fund" { try ProAccessService.requirePro(user) }
 
         if let title = body.title {
@@ -233,10 +259,20 @@ struct WishlistItemController: RouteCollection {
             item.contributionGoal = type == "cash_fund" ? (body.contributionGoal ?? item.contributionGoal) : nil
         }
 
+        if let ownerNote = body.ownerNote {
+            try await MentionService.validateMentions(
+                in: ownerNote,
+                wishlistID: wishlistID,
+                actorID: userId,
+                on: req.db
+            )
+        }
+
         try await item.save(on: req.db)
         if let linked = body.linkedWishlistIDs {
             try await syncMemberships(item: item, userID: userId, requestedIDs: Set(linked + [wishlistID]), on: req.db)
         }
+        await notifyOwnerNoteMentions(body.ownerNote, previousText: previousOwnerNote, wishlist: wishlist, actor: user, req: req)
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item changed in “\(wishlist.title)”.", on: req.db, client: req.client, logger: req.logger)
         return item
     }
@@ -313,6 +349,31 @@ struct WishlistItemController: RouteCollection {
             }
         }
         return type
+    }
+
+    private func notifyOwnerNoteMentions(
+        _ note: String?,
+        previousText: String? = nil,
+        wishlist: Wishlist,
+        actor: User,
+        req: Request
+    ) async {
+        guard let note else { return }
+        do {
+            try await MentionService.notifyNewMentions(
+                in: note,
+                previousText: previousText,
+                wishlistID: try wishlist.requireID(),
+                actorID: try actor.requireID(),
+                actorName: actor.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Someone",
+                context: "in an item note.",
+                on: req.db,
+                client: req.client,
+                logger: req.logger
+            )
+        } catch {
+            req.logger.warning("Item was saved, but note mention notifications could not be created: \(error)")
+        }
     }
 }
 
