@@ -103,10 +103,26 @@ struct SocialController: RouteCollection {
 
     func accept(req: Request) async throws -> FriendshipDTO {
         let me = try req.auth.require(User.self).requireID()
-        guard let id = req.parameters.get("requestID", as: UUID.self),
-              let friendship = try await Friendship.query(on: req.db).filter(\.$id == id).filter(\.$recipient.$id == me).filter(\.$status == "pending").with(\.$requester).first()
-        else { throw Abort(.notFound) }
-        return try await accept(friendship, for: me, req: req)
+        guard let id = req.parameters.get("requestID", as: UUID.self) else { throw Abort(.notFound) }
+        if let friendship = try await Friendship.query(on: req.db)
+            .filter(\.$id == id)
+            .filter(\.$recipient.$id == me)
+            .filter(\.$status == "pending")
+            .with(\.$requester)
+            .first() {
+            return try await accept(friendship, for: me, req: req)
+        }
+        // Acceptance is idempotent. A double tap, stale People screen, or
+        // another signed-in device may arrive after the request was accepted.
+        if let accepted = try await Friendship.query(on: req.db)
+            .filter(\.$id == id)
+            .filter(\.$recipient.$id == me)
+            .filter(\.$status == "accepted")
+            .with(\.$requester)
+            .first() {
+            return FriendshipDTO(id: try accepted.requireID(), user: try socialUser(accepted.requester), direction: "incoming", status: "accepted")
+        }
+        throw Abort(.notFound, reason: "This friend request is no longer available.")
     }
 
     func acceptFromUser(req: Request) async throws -> FriendshipDTO {
