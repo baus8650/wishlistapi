@@ -24,6 +24,10 @@ struct ForgotPasswordRequest: Content {
     let email: String
 }
 
+struct ResendEmailVerificationRequest: Content {
+    let email: String
+}
+
 struct ResetPasswordRequest: Content {
     let token: String
     let password: String
@@ -74,6 +78,19 @@ struct PasswordResetMessage: Content {
     let message: String
 }
 
+struct EmailVerificationPendingResponse: Content {
+    let email: String
+    let verificationRequired: Bool
+}
+
+struct EmailVerificationMessage: Content {
+    let message: String
+}
+
+struct VerifyEmailRequest: Content {
+    let token: String
+}
+
 private struct ResendEmailRequest: Content {
     let from: String
     let to: [String]
@@ -94,12 +111,14 @@ struct AuthController: RouteCollection {
         let auth = routes.grouped("auth")
         auth.post("register", use: register)
         auth.post("login", use: login)
+        auth.post("verify-email", use: verifyEmail)
+        auth.post("resend-verification", use: resendEmailVerification)
         auth.post("forgot-password", use: forgotPassword)
         auth.post("reset-password", use: resetPassword)
         auth.post("google", use: googleLogin)
     }
 
-    func register(req: Request) async throws -> TokenResponse {
+    func register(req: Request) async throws -> EmailVerificationPendingResponse {
         let body = try req.content.decode(RegisterRequest.self)
         let email = body.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let displayName = body.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -123,16 +142,16 @@ struct AuthController: RouteCollection {
             displayName: displayName?.isEmpty == false ? displayName : nil
         )
         try await user.save(on: req.db)
-
-        guard let userId = user.id else {
-            throw Abort(.internalServerError, reason: "User missing id after registration.")
+        do {
+            try await createAndSendEmailVerification(for: user, req: req)
+        } catch {
+            // Do not leave behind an account that cannot be signed into when the
+            // email provider itself is unavailable during registration.
+            try? await user.delete(on: req.db)
+            throw error
         }
 
-        let exp = ExpirationClaim(value: Date().addingTimeInterval(TimeInterval(Self.accessTokenTTLSeconds)))
-        let payload = AccessTokenPayload(sub: .init(value: userId.uuidString), exp: exp)
-        let token = try await req.jwt.sign(payload)
-
-        return TokenResponse(accessToken: token, tokenType: "Bearer", expiresIn: Self.accessTokenTTLSeconds)
+        return EmailVerificationPendingResponse(email: email, verificationRequired: true)
     }
 
     func login(req: Request) async throws -> TokenResponse {
@@ -150,15 +169,65 @@ struct AuthController: RouteCollection {
             throw Abort(.unauthorized, reason: "Invalid credentials.")
         }
 
-        guard let userId = user.id else {
-            throw Abort(.internalServerError, reason: "User missing id.")
+        guard user.emailVerifiedAt != nil else {
+            throw Abort(.forbidden, reason: "Verify your email before signing in. You can request another verification link from the sign-in screen.")
         }
 
-        let exp = ExpirationClaim(value: Date().addingTimeInterval(TimeInterval(Self.accessTokenTTLSeconds)))
-        let payload = AccessTokenPayload(sub: .init(value: userId.uuidString), exp: exp)
-        let token = try await req.jwt.sign(payload)
+        return try await tokenResponse(for: user, req: req)
+    }
 
-        return TokenResponse(accessToken: token, tokenType: "Bearer", expiresIn: Self.accessTokenTTLSeconds)
+    func verifyEmail(req: Request) async throws -> TokenResponse {
+        let body = try req.content.decode(VerifyEmailRequest.self)
+        let parts = body.token.split(separator: ".", maxSplits: 1).map(String.init)
+        guard parts.count == 2,
+              let tokenID = UUID(uuidString: parts[0]),
+              let verification = try await EmailVerificationToken.find(tokenID, on: req.db),
+              verification.usedAt == nil,
+              verification.expiresAt > Date(),
+              try Bcrypt.verify(parts[1], created: verification.tokenHash)
+        else {
+            throw Abort(.badRequest, reason: "This verification link is invalid or has expired.")
+        }
+
+        let user = try await verification.$user.get(on: req.db)
+        user.emailVerifiedAt = Date()
+        try await user.save(on: req.db)
+        verification.usedAt = Date()
+        try await verification.save(on: req.db)
+
+        return try await tokenResponse(for: user, req: req)
+    }
+
+    func resendEmailVerification(req: Request) async throws -> EmailVerificationMessage {
+        let body = try req.content.decode(ResendEmailVerificationRequest.self)
+        let email = body.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let genericMessage = "If that account still needs verification, a link is on its way."
+
+        guard let user = try await User.query(on: req.db)
+            .filter(\.$email == email)
+            .first(),
+              user.emailVerifiedAt == nil,
+              let userID = user.id
+        else {
+            return EmailVerificationMessage(message: genericMessage)
+        }
+
+        let recentCount = try await EmailVerificationToken.query(on: req.db)
+            .filter(\.$user.$id == userID)
+            .filter(\.$createdAt > Date().addingTimeInterval(-15 * 60))
+            .count()
+        guard recentCount < 3 else {
+            return EmailVerificationMessage(message: genericMessage)
+        }
+
+        do {
+            try await createAndSendEmailVerification(for: user, req: req)
+        } catch {
+            // This endpoint deliberately remains non-enumerating. The user can
+            // safely try again later without learning whether an email exists.
+            req.logger.error("Unable to resend email verification: \(error)")
+        }
+        return EmailVerificationMessage(message: genericMessage)
     }
 
     func forgotPassword(req: Request) async throws -> PasswordResetMessage {
@@ -282,6 +351,7 @@ struct AuthController: RouteCollection {
                     passwordHash: try Bcrypt.hash(randomPassword),
                     displayName: profile.name?.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
+                user.emailVerifiedAt = Date()
                 try await user.save(on: req.db)
             }
 
@@ -301,11 +371,92 @@ struct AuthController: RouteCollection {
                     .with(\.$user)
                     .first()
                 else { throw error }
+                if linked.user.emailVerifiedAt == nil {
+                    linked.user.emailVerifiedAt = Date()
+                    try await linked.user.save(on: req.db)
+                }
                 return try await tokenResponse(for: linked.user, req: req)
             }
         }
 
+        if user.emailVerifiedAt == nil {
+            // Google has just asserted this address is verified. Linking that
+            // identity may therefore safely complete verification for a legacy
+            // password account using the same email.
+            user.emailVerifiedAt = Date()
+            try await user.save(on: req.db)
+        }
+
         return try await tokenResponse(for: user, req: req)
+    }
+
+    private func createAndSendEmailVerification(for user: User, req: Request) async throws {
+        let userID = try user.requireID()
+        var generator = SystemRandomNumberGenerator()
+        let secret = (0..<32).map { _ in
+            String(format: "%02x", UInt8.random(in: .min ... .max, using: &generator))
+        }.joined()
+        let verification = EmailVerificationToken(
+            userID: userID,
+            tokenHash: try Bcrypt.hash(secret),
+            expiresAt: Date().addingTimeInterval(24 * 60 * 60)
+        )
+        try await verification.save(on: req.db)
+        guard let verificationID = verification.id else {
+            throw Abort(.internalServerError, reason: "Unable to create email verification request.")
+        }
+
+        do {
+            try await sendEmailVerification(
+                to: user.email,
+                token: "\(verificationID.uuidString).\(secret)",
+                req: req
+            )
+        } catch {
+            try? await verification.delete(on: req.db)
+            throw error
+        }
+    }
+
+    private func sendEmailVerification(to email: String, token: String, req: Request) async throws {
+        guard let webAppURL = Environment.get("WEB_APP_URL"), !webAppURL.isEmpty else {
+            throw Abort(.internalServerError, reason: "Email verification is not configured.")
+        }
+        let verificationURL = "\(webAppURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/?verifyEmailToken=\(token)"
+
+        guard let apiKey = Environment.get("RESEND_API_KEY"), !apiKey.isEmpty,
+              let from = Environment.get("EMAIL_VERIFICATION_FROM_EMAIL") ?? Environment.get("PASSWORD_RESET_FROM_EMAIL"), !from.isEmpty
+        else {
+            if req.application.environment != .production {
+                req.logger.notice("Email verification link for \(email): \(verificationURL)")
+                return
+            }
+            throw Abort(.internalServerError, reason: "Email verification is not configured.")
+        }
+
+        let payload = ResendEmailRequest(
+            from: from,
+            to: [email],
+            subject: "Verify your Hushful email",
+            html: """
+            <div style="font-family:Arial,sans-serif;color:#302b34;line-height:1.6;max-width:560px;margin:auto">
+              <h1 style="color:#786a82">Verify your Hushful email</h1>
+              <p>Thanks for joining Hushful. Confirm your email to finish creating your account.</p>
+              <p><a href="\(verificationURL)" style="display:inline-block;background:#786a82;color:white;text-decoration:none;padding:12px 20px;border-radius:999px">Verify email</a></p>
+              <p>This link expires in 24 hours and can only be used once.</p>
+              <p>If you didn't create this account, you can safely ignore this email.</p>
+            </div>
+            """
+        )
+
+        let response = try await req.client.post(URI(string: "https://api.resend.com/emails")) { request in
+            request.headers.bearerAuthorization = BearerAuthorization(token: apiKey)
+            request.headers.contentType = .json
+            try request.content.encode(payload)
+        }
+        guard response.status.code >= 200, response.status.code < 300 else {
+            throw Abort(.badGateway, reason: "Email provider rejected the verification email.")
+        }
     }
 
     private func sendPasswordResetEmail(to email: String, token: String, req: Request) async throws {

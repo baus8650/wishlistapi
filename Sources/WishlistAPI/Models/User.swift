@@ -13,6 +13,12 @@ final class User: Model {
     @Field(key: "password_hash")
     var passwordHash: String
 
+    /// Password-created accounts must confirm control of their inbox before
+    /// they can receive an access token. OAuth providers with a verified email
+    /// set this at account creation.
+    @OptionalField(key: "email_verified_at")
+    var emailVerifiedAt: Date?
+
     @OptionalField(key: "display_name")
     var displayName: String?
 
