@@ -131,8 +131,30 @@ struct AuthController: RouteCollection {
             .filter(\.$email == email)
             .first()
 
-        if existing != nil {
-            throw Abort(.conflict, reason: "Email already registered.")
+        if let existing {
+            // Treat a repeat submission of an unfinished registration as a
+            // resend, but only after proving the user still knows the password
+            // chosen for that account. This avoids a confusing 409 if the first
+            // verification email was missed.
+            guard existing.emailVerifiedAt == nil,
+                  try Bcrypt.verify(body.password, created: existing.passwordHash),
+                  let userID = existing.id
+            else {
+                throw Abort(.conflict, reason: "Email already registered. Sign in instead, or request a verification link if you still need one.")
+            }
+
+            let recentCount = try await EmailVerificationToken.query(on: req.db)
+                .filter(\.$user.$id == userID)
+                .filter(\.$createdAt > Date().addingTimeInterval(-15 * 60))
+                .count()
+            if recentCount < 3 {
+                do {
+                    try await createAndSendEmailVerification(for: existing, req: req)
+                } catch {
+                    req.logger.error("Unable to resend email verification during registration: \(error)")
+                }
+            }
+            return EmailVerificationPendingResponse(email: email, verificationRequired: true)
         }
 
         let hash = try Bcrypt.hash(body.password)
