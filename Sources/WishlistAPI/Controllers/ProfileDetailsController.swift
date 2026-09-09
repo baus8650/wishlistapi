@@ -140,7 +140,7 @@ struct ProfileDetailsController: RouteCollection {
         guard try await ProfileAccessService.canViewBirthday(viewerID: viewerID, target: subject, on: req.db) else {
             throw Abort(.forbidden, reason: "This birthday is not available to you.")
         }
-        guard viewerID != subject.requireID() else { return .init(enabled: false, reminderDaysBefore: 7) }
+        guard viewerID != (try subject.requireID()) else { return .init(enabled: false, reminderDaysBefore: 7) }
         let alert = try await BirthdayAlert.query(on: req.db)
             .filter(\.$subscriber.$id == viewerID)
             .filter(\.$subject.$id == subject.requireID())
