@@ -55,6 +55,11 @@ struct WishlistItemController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userID, on: req.db) else {
             throw Abort(.notFound)
         }
+        if try await WishlistCollaborator.query(on: req.db)
+            .filter(\.$wishlist.$id == wishlistID)
+            .count() > 0 {
+            return try await MentionService.collaborativeCandidates(for: wishlistID, excluding: userID, on: req.db)
+        }
         return try await MentionService.candidates(for: wishlistID, excluding: userID, on: req.db)
     }
 
@@ -89,12 +94,7 @@ struct WishlistItemController: RouteCollection {
         guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
         let itemType = try validatedType(body.itemType, url: body.url, goal: body.contributionGoal)
         if itemType == "cash_fund" { try ProAccessService.requirePro(user) }
-        try await MentionService.validateMentions(
-            in: body.ownerNote ?? "",
-            wishlistID: wishlistID,
-            actorID: userId,
-            on: req.db
-        )
+        try await validateOwnerNoteMentions(body.ownerNote ?? "", wishlist: wishlist, actorID: userId, on: req.db)
 
         item.title = title
         item.url = body.url?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
@@ -166,12 +166,7 @@ struct WishlistItemController: RouteCollection {
             itemType: itemType,
             contributionGoal: itemType == "cash_fund" ? body.contributionGoal : nil
         )
-        try await MentionService.validateMentions(
-            in: body.ownerNote ?? "",
-            wishlistID: wishlistID,
-            actorID: userId,
-            on: req.db
-        )
+        try await validateOwnerNoteMentions(body.ownerNote ?? "", wishlist: wishlist, actorID: userId, on: req.db)
         try await item.save(on: req.db)
         try await syncMemberships(item: item, userID: userId, requestedIDs: Set((body.linkedWishlistIDs ?? []) + [wishlistID]), on: req.db)
         await notifyOwnerNoteMentions(body.ownerNote, wishlist: wishlist, actor: user, req: req)
@@ -260,12 +255,7 @@ struct WishlistItemController: RouteCollection {
         }
 
         if let ownerNote = body.ownerNote {
-            try await MentionService.validateMentions(
-                in: ownerNote,
-                wishlistID: wishlistID,
-                actorID: userId,
-                on: req.db
-            )
+            try await validateOwnerNoteMentions(ownerNote, wishlist: wishlist, actorID: userId, on: req.db)
         }
 
         try await item.save(on: req.db)
@@ -360,6 +350,13 @@ struct WishlistItemController: RouteCollection {
     ) async {
         guard let note else { return }
         do {
+            let collaboratorIDs = try await WishlistCollaborator.query(on: req.db)
+                .filter(\.$wishlist.$id == wishlist.requireID())
+                .all()
+                .map(\.$user.id)
+            let eligibleUserIDs = collaboratorIDs.isEmpty
+                ? nil
+                : try await MentionService.collaborativeMemberIDs(for: wishlist.requireID(), on: req.db)
             try await MentionService.notifyNewMentions(
                 in: note,
                 previousText: previousText,
@@ -367,12 +364,40 @@ struct WishlistItemController: RouteCollection {
                 actorID: try actor.requireID(),
                 actorName: actor.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Someone",
                 context: "in an item note.",
+                eligibleUserIDs: eligibleUserIDs,
                 on: req.db,
                 client: req.client,
                 logger: req.logger
             )
         } catch {
             req.logger.warning("Item was saved, but note mention notifications could not be created: \(error)")
+        }
+    }
+
+    private func validateOwnerNoteMentions(
+        _ note: String,
+        wishlist: Wishlist,
+        actorID: UUID,
+        on db: any Database
+    ) async throws {
+        let collaboratorIDs = try await WishlistCollaborator.query(on: db)
+            .filter(\.$wishlist.$id == wishlist.requireID())
+            .all()
+            .map(\.$user.id)
+        if collaboratorIDs.isEmpty {
+            try await MentionService.validateMentions(
+                in: note,
+                wishlistID: try wishlist.requireID(),
+                actorID: actorID,
+                on: db
+            )
+        } else {
+            try await MentionService.validateMentions(
+                in: note,
+                allowedUserIDs: try await MentionService.collaborativeMemberIDs(for: try wishlist.requireID(), on: db),
+                actorID: actorID,
+                on: db
+            )
         }
     }
 }

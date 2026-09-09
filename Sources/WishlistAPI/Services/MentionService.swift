@@ -47,6 +47,39 @@ enum MentionService {
         .sorted { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
     }
 
+    /// Returns the account IDs that make up a collaborative wishlist. Unlike
+    /// recipient viewers, these users can access a joint list even when the
+    /// list is using the private "our wishlist" mode.
+    static func collaborativeMemberIDs(
+        for wishlistID: UUID,
+        on db: any Database
+    ) async throws -> Set<UUID> {
+        guard let wishlist = try await Wishlist.find(wishlistID, on: db) else { return [] }
+        let ownerID = try await wishlist.$owner.get(on: db).requireID()
+        let collaboratorIDs = try await WishlistCollaborator.query(on: db)
+            .filter(\.$wishlist.$id == wishlistID)
+            .all()
+            .map(\.$user.id)
+        return Set([ownerID] + collaboratorIDs)
+    }
+
+    static func collaborativeCandidates(
+        for wishlistID: UUID,
+        excluding actorID: UUID? = nil,
+        on db: any Database
+    ) async throws -> [SocialUserDTO] {
+        let memberIDs = try await collaborativeMemberIDs(for: wishlistID, on: db)
+        let users = try await User.query(on: db).all().filter { user in
+            guard let id = user.id else { return false }
+            return memberIDs.contains(id) && id != actorID
+        }
+        return users.compactMap { user in
+            guard let id = user.id, let username = user.username, !username.isEmpty else { return nil }
+            return SocialUserDTO(id: id, username: username, displayName: user.displayName, hasAvatar: user.avatarData != nil)
+        }
+        .sorted { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
+    }
+
     /// Rejects a mention of a known user who cannot access the list. Unknown
     /// @words remain ordinary text, while known users must be authorized.
     static func validateMentions(
