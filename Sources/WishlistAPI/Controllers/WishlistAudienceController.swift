@@ -19,10 +19,12 @@ struct WishlistAudienceController: RouteCollection {
         let ownerID = try req.auth.require(User.self).requireID(), wishlist = try await ownedWishlist(req), wishlistID = try wishlist.requireID()
         let body = try req.content.decode(Audience.self)
         let userIDs = Array(Set(body.userIDs)), groupIDs = Array(Set(body.groupIDs))
+        let owner = try await wishlist.$owner.get(on: req.db)
+        let isAdultOnly = wishlist.matureContentEnabled || owner.isAgeRestrictedProfile
         for userID in userIDs {
             guard let friendship = try await acceptedFriendship(ownerID, userID, on: req.db), friendship.status == "accepted" else { throw Abort(.forbidden, reason: "Wishlists can only be shared directly with friends.") }
             guard try await !ProfileAccessService.isBlocked(ownerID, userID, on: req.db) else { throw Abort(.forbidden, reason: "A blocked account cannot be added to a wishlist audience.") }
-            if wishlist.matureContentEnabled || (try await wishlist.$owner.get(on: req.db)).isAgeRestrictedProfile {
+            if isAdultOnly {
                 guard let recipient = try await User.find(userID, on: req.db), recipient.derivedAgeBand == "adult" else {
                     throw Abort(.forbidden, reason: "Lists limited to adults can only be shared with adult accounts.")
                 }

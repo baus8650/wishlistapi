@@ -85,6 +85,13 @@ struct ProfileDetailsController: RouteCollection {
             guard Self.age(year: year, month: month, day: day) >= 13 else {
                 throw Abort(.forbidden, reason: "Hushful accounts are available to people age 13 and older.")
             }
+            if Self.age(year: year, month: month, day: day) < 18,
+               try await Wishlist.query(on: req.db)
+                .filter(\.$owner.$id == user.requireID())
+                .filter(\.$matureContentEnabled == true)
+                .first() != nil {
+                throw Abort(.conflict, reason: "Turn off adult-only lists before changing this birthday to an under-18 age range.")
+            }
             user.birthdayYear = year
             user.birthdayMonth = month
             user.birthdayDay = day
