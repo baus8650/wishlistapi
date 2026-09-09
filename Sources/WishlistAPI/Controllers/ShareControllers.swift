@@ -93,6 +93,7 @@ struct RecipientShareController: RouteCollection {
         let item: WishlistItem
         let purchased: Bool          // purchased by anyone
         let purchasedByMe: Bool      // purchased by this viewer
+        let purchasedByOthers: Bool  // purchased by another viewer
         let purchasedQuantity: Int   // total quantity claimed by all viewers
         let purchasedQuantityByMe: Int
         let notes: [RecipientNote]   // notes from all recipients
@@ -291,7 +292,10 @@ struct RecipientShareController: RouteCollection {
     // MARK: Recipient lists items + their state
     func listItemsWithState(req: Request) async throws -> [ItemWithRecipientInfo] {
         let (wishlist, viewer) = try await resolveWishlistAndViewer(req: req)
+        return try await listItemsWithState(req: req, wishlist: wishlist, viewer: viewer)
+    }
 
+    func listItemsWithState(req: Request, wishlist: Wishlist, viewer: WishlistViewer) async throws -> [ItemWithRecipientInfo] {
         let wishlistId = try wishlist.requireID()
         let viewerId = try viewer.requireID()
 
@@ -338,7 +342,7 @@ struct RecipientShareController: RouteCollection {
 
         return items.map { item in
             guard let id = item.id else {
-                return ItemWithRecipientInfo(item: item, purchased: false, purchasedByMe: false, purchasedQuantity: 0, purchasedQuantityByMe: 0, notes: [])
+                return ItemWithRecipientInfo(item: item, purchased: false, purchasedByMe: false, purchasedByOthers: false, purchasedQuantity: 0, purchasedQuantityByMe: 0, notes: [])
             }
 
             let itemStates = statesByItem[id] ?? []
@@ -385,6 +389,7 @@ struct RecipientShareController: RouteCollection {
                 item: item,
                 purchased: purchasedByAnyone,
                 purchasedByMe: purchasedByMe,
+                purchasedByOthers: purchasedQuantity > purchasedQuantityByMe,
                 purchasedQuantity: purchasedQuantity,
                 purchasedQuantityByMe: purchasedQuantityByMe,
                 notes: notes
@@ -395,6 +400,10 @@ struct RecipientShareController: RouteCollection {
     // MARK: Recipient updates state
     func upsertState(req: Request) async throws -> ItemWithRecipientInfo {
         let (wishlist, viewer) = try await resolveWishlistAndViewer(req: req)
+        return try await upsertState(req: req, wishlist: wishlist, viewer: viewer)
+    }
+
+    func upsertState(req: Request, wishlist: Wishlist, viewer: WishlistViewer) async throws -> ItemWithRecipientInfo {
         let body = try req.content.decode(UpsertStateRequest.self)
         let wishlistId = try wishlist.requireID()
         let viewerId = try viewer.requireID()
@@ -527,7 +536,7 @@ struct RecipientShareController: RouteCollection {
                 return [RecipientNote(note: raw, authorDisplayName: author, updatedAt: state.updatedAt, isMine: true)]
             }()
 
-            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchasedByMe, purchasedQuantity: purchasedQuantity, purchasedQuantityByMe: state.purchasedQuantity, notes: notes)
+            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchasedByMe, purchasedByOthers: purchasedQuantity > state.purchasedQuantity, purchasedQuantity: purchasedQuantity, purchasedQuantityByMe: state.purchasedQuantity, notes: notes)
         } else {
             let purchasedQuantity = desiredQuantity ?? 0
             let purchased = purchasedQuantity > 0
@@ -565,7 +574,7 @@ struct RecipientShareController: RouteCollection {
             let totalPurchasedQuantity = allStates.reduce(0) { $0 + $1.purchasedQuantity }
             let purchasedByAnyone = totalPurchasedQuantity > 0
 
-            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchased, purchasedQuantity: totalPurchasedQuantity, purchasedQuantityByMe: purchasedQuantity, notes: notes)
+            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchased, purchasedByOthers: totalPurchasedQuantity > purchasedQuantity, purchasedQuantity: totalPurchasedQuantity, purchasedQuantityByMe: purchasedQuantity, notes: notes)
         }
     }
 

@@ -146,6 +146,7 @@ func routes(_ app: Application) throws {
     try wishlists.register(collection: WishlistDiscussionController())
     try wishlists.register(collection: WishlistAudienceController())
     try wishlists.register(collection: WishlistCollaboratorController())
+    try wishlists.register(collection: GiftPlanningController())
 
     // Mount items at /wishlists (your WishlistItemController likely expects /wishlists/:id/items…)
     try wishlists.register(collection: WishlistItemController())
