@@ -119,6 +119,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateUserFeedback())
     app.migrations.add(AddShareNameToUserFeedback())
     app.migrations.add(CreateAppleProPurchases())
+    app.migrations.add(CreateGooglePlayProPurchases())
     app.migrations.add(AddEmailVerification())
     app.migrations.add(CreateAuthRateLimitEvents())
     app.migrations.add(CreateUserReports())

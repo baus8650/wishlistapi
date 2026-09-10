@@ -54,6 +54,7 @@ func routes(_ app: Application) throws {
     // Auth (register/login)
     try v1.register(collection: AuthController())
     try v1.register(collection: ProPurchaseController())
+    try v1.register(collection: GooglePlayProPurchaseController())
 
     // Public sharing endpoints accept anonymous guests, but opportunistically
     // authenticate bearer tokens so account age and block rules still apply.
