@@ -37,7 +37,8 @@ struct GooglePlayProPurchaseController: RouteCollection {
         )
         guard purchase.productID == body.productID,
               purchase.purchaseToken == nil || purchase.purchaseToken == body.purchaseToken,
-              purchase.obfuscatedExternalAccountID == GooglePlayPurchaseService.obfuscatedAccountID(for: userID) else {
+              let obfuscatedAccountID = purchase.obfuscatedExternalAccountID,
+              GooglePlayPurchaseService.acceptedObfuscatedAccountIDs(for: userID).contains(obfuscatedAccountID) else {
             throw Abort(.forbidden, reason: "This purchase belongs to a different Hushful account.")
         }
 
