@@ -165,6 +165,7 @@ func routes(_ app: Application) throws {
     protected.get("metrics", "accounts", use: metrics.accounts)
     try protected.register(collection: FeedbackController())
     try protected.register(collection: AdminTOTPController())
+    try protected.register(collection: AdminProController())
 
     // Mount wishlists at /wishlists
     let wishlists = protected.grouped("wishlists")

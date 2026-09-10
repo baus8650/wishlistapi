@@ -103,16 +103,7 @@ struct GooglePlayProPurchaseController: RouteCollection {
                 try await record.save(on: db)
             }
 
-            let appleEntitled = try await AppleProPurchase.query(on: db)
-                .filter(\.$user.$id == userID)
-                .filter(\.$active == true)
-                .count() > 0
-            let googleEntitled = try await GooglePlayProPurchase.query(on: db)
-                .filter(\.$user.$id == userID)
-                .filter(\.$active == true)
-                .count() > 0
-            user.hasLifetimePro = appleEntitled || googleEntitled
-            try await user.save(on: db)
+            try await ProEntitlementService.refresh(user, on: db)
             return user.toPublic()
         }
     }

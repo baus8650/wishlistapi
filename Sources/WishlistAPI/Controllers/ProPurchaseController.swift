@@ -91,12 +91,7 @@ struct ProPurchaseController: RouteCollection {
             try await purchase.save(on: db)
             // A refund for an older purchase must not cancel a subsequent valid
             // purchase from either store.
-            let appleEntitled = try await AppleProPurchase.query(on: db)
-                .filter(\.$user.$id == userID).filter(\.$active == true).count() > 0
-            let googleEntitled = try await GooglePlayProPurchase.query(on: db)
-                .filter(\.$user.$id == userID).filter(\.$active == true).count() > 0
-            user.hasLifetimePro = appleEntitled || googleEntitled
-            try await user.save(on: db)
+            try await ProEntitlementService.refresh(user, on: db)
             return user.toPublic()
         }
     }

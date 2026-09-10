@@ -140,6 +140,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddAdminTOTP())
     app.migrations.add(AddAgeEligibilityConfirmation())
     app.migrations.add(BackfillShareLinkExpiry())
+    app.migrations.add(CreateAdminProGrants())
 
     // MARK: Routes
     try routes(app)
