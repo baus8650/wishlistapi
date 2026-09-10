@@ -17,6 +17,9 @@ struct RegisterRequest: Content {
     /// leave it empty; a filled value is rejected before account creation.
     let website: String?
     let acceptedTermsVersion: String?
+    /// Required before a new account is created. Birthday collection happens
+    /// later during onboarding for age-band and mature-content controls.
+    let ageConfirmed: Bool?
 }
 
 struct LoginRequest: Content {
@@ -41,6 +44,7 @@ struct ResetPasswordRequest: Content {
 struct GoogleLoginRequest: Content {
     let idToken: String
     let acceptedTermsVersion: String?
+    let ageConfirmed: Bool?
     let totpCode: String?
 }
 
@@ -137,6 +141,9 @@ struct AuthController: RouteCollection {
         guard body.acceptedTermsVersion == Self.currentTermsVersion else {
             throw Abort(.badRequest, reason: "Accept the Terms of Use and Privacy Policy to create an account.")
         }
+        guard body.ageConfirmed == true else {
+            throw Abort(.badRequest, reason: "You must confirm that you are at least 13 years old to create a Hushful account.")
+        }
 
         let clientKey = AuthRateLimitService.clientKey(req)
         try await AuthRateLimitService.enforce(req, scope: "register-ip:\(clientKey)", limit: 10, window: 60 * 60)
@@ -184,6 +191,7 @@ struct AuthController: RouteCollection {
         )
         user.termsAcceptedAt = Date()
         user.termsVersion = Self.currentTermsVersion
+        user.ageConfirmedAt = Date()
         try await user.save(on: req.db)
         do {
             try await createAndSendEmailVerification(for: user, req: req)
@@ -413,6 +421,9 @@ struct AuthController: RouteCollection {
                 guard body.acceptedTermsVersion == Self.currentTermsVersion else {
                     throw Abort(.badRequest, reason: "Accept the Terms of Use and Privacy Policy to create an account.")
                 }
+                guard body.ageConfirmed == true else {
+                    throw Abort(.badRequest, reason: "You must confirm that you are at least 13 years old to create a Hushful account.")
+                }
                 var generator = SystemRandomNumberGenerator()
                 let randomPassword = (0..<32).map { _ in
                     String(format: "%02x", UInt8.random(in: .min ... .max, using: &generator))
@@ -425,6 +436,7 @@ struct AuthController: RouteCollection {
                 user.emailVerifiedAt = Date()
                 user.termsAcceptedAt = Date()
                 user.termsVersion = Self.currentTermsVersion
+                user.ageConfirmedAt = Date()
                 try await user.save(on: req.db)
             }
 

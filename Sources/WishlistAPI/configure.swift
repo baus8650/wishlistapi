@@ -136,6 +136,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddSafetyModerationFields())
     app.migrations.add(AddAdminSecurityControls())
     app.migrations.add(AddAdminTOTP())
+    app.migrations.add(AddAgeEligibilityConfirmation())
     app.migrations.add(BackfillShareLinkExpiry())
 
     // MARK: Routes

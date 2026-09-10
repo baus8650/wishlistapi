@@ -90,6 +90,7 @@ final class User: Model {
 
     @OptionalField(key: "terms_accepted_at") var termsAcceptedAt: Date?
     @OptionalField(key: "terms_version") var termsVersion: String?
+    @OptionalField(key: "age_confirmed_at") var ageConfirmedAt: Date?
     @OptionalField(key: "suspended_at") var suspendedAt: Date?
 
     @Field(key: "role") var role: String
