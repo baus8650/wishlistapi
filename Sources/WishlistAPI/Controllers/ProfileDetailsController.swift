@@ -279,6 +279,8 @@ struct ProfileDetailsController: RouteCollection {
         guard !label.isEmpty, label.count <= 80 else { throw Abort(.badRequest, reason: "Attribute names must be 1–80 characters.") }
         guard !value.isEmpty, value.count <= 200 else { throw Abort(.badRequest, reason: "Attribute values must be 1–200 characters.") }
         guard validVisibility(body.visibility) else { throw Abort(.badRequest, reason: "Invalid attribute visibility.") }
+        try ContentSafetyService.validate(label, field: "attribute name")
+        try ContentSafetyService.validate(value, field: "profile detail")
         return (label, value, body.visibility)
     }
 

@@ -21,6 +21,9 @@ final class WishlistShareLink: Model, Content {
     @Field(key: "token_hash")
     var tokenHash: String
 
+    @OptionalField(key: "expires_at")
+    var expiresAt: Date?
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 

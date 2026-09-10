@@ -88,6 +88,7 @@ func routes(_ app: Application) throws {
         if let requestedName = body.displayName {
             let displayName = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !displayName.isEmpty, displayName.count <= 80 else { throw Abort(.badRequest, reason: "Display name must be 1–80 characters.") }
+            try ContentSafetyService.validate(displayName, field: "display name")
             user.displayName = displayName
             user.displayNameSearch = displayName.lowercased()
         }
@@ -162,6 +163,7 @@ func routes(_ app: Application) throws {
     protected.get("metrics", "summary", use: metrics.summary)
     protected.get("metrics", "accounts", use: metrics.accounts)
     try protected.register(collection: FeedbackController())
+    try protected.register(collection: AdminTOTPController())
 
     // Mount wishlists at /wishlists
     let wishlists = protected.grouped("wishlists")

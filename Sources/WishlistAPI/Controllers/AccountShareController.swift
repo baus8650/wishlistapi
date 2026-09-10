@@ -81,6 +81,10 @@ struct AccountShareController: RouteCollection {
             throw Abort(.notFound)
         }
 
+        guard link.expiresAt == nil || link.expiresAt! > Date() else {
+            throw Abort(.gone, reason: "This share link has expired.")
+        }
+
         let wishlist = try await link.$wishlist.get(on: req.db)
         let wishlistID = try wishlist.requireID()
         let owner = try await wishlist.$owner.get(on: req.db)

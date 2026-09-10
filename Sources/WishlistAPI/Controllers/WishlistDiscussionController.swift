@@ -67,6 +67,8 @@ struct WishlistDiscussionController: RouteCollection {
     func create(req: Request) async throws -> DiscussionCommentResponse {
         let user = try req.auth.require(User.self)
         let userID = try user.requireID()
+        try await AuthRateLimitService.enforce(req, scope: "discussion-comment:\(userID)", limit: 30, window: 60 * 60)
+        try await AuthRateLimitService.enforce(req, scope: "discussion-comment-ip:\(AuthRateLimitService.clientKey(req))", limit: 120, window: 60 * 60)
         let (wishlist, participant) = try await authorize(wishlistID: req, userID: userID, on: req.db)
         let wishlistID = try wishlist.requireID()
         let body = try req.content.decode(CreateDiscussionCommentRequest.self)
@@ -74,6 +76,7 @@ struct WishlistDiscussionController: RouteCollection {
         guard !message.isEmpty, message.count <= 1_000 else {
             throw Abort(.badRequest, reason: "Comments must be between 1 and 1,000 characters.")
         }
+        try ContentSafetyService.validate(message, field: "comment")
 
         let members = try await memberUsers(for: wishlist, excluding: nil, on: req.db)
         let memberIDs = Set(members.map(\.id))

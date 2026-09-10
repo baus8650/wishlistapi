@@ -88,12 +88,14 @@ struct WishlistItemController: RouteCollection {
         guard !title.isEmpty else {
             throw Abort(.badRequest, reason: "Title is required.")
         }
+        try ContentSafetyService.validate(title, field: "item title")
         if let price = body.price, price < 0 {
             throw Abort(.badRequest, reason: "price cannot be negative.")
         }
         guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
         let itemType = try validatedType(body.itemType, url: body.url, goal: body.contributionGoal)
         if itemType == "cash_fund" { try ProAccessService.requirePro(user) }
+        if let ownerNote = body.ownerNote { try ContentSafetyService.validate(ownerNote, field: "note") }
         try await validateOwnerNoteMentions(body.ownerNote ?? "", wishlist: wishlist, actorID: userId, on: req.db)
 
         item.title = title
@@ -148,6 +150,7 @@ struct WishlistItemController: RouteCollection {
         let body = try req.content.decode(CreateRequest.self)
         let title = body.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw Abort(.badRequest, reason: "Title is required.") }
+        try ContentSafetyService.validate(title, field: "item title")
 
         if let price = body.price, price < 0 {
             throw Abort(.badRequest, reason: "price cannot be negative.")
@@ -155,6 +158,7 @@ struct WishlistItemController: RouteCollection {
         guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
         let itemType = try validatedType(body.itemType, url: body.url, goal: body.contributionGoal)
         if itemType == "cash_fund" { try ProAccessService.requirePro(user) }
+        if let ownerNote = body.ownerNote { try ContentSafetyService.validate(ownerNote, field: "note") }
 
         let item = WishlistItem(
             wishlistId: wishlistID,
@@ -236,6 +240,7 @@ struct WishlistItemController: RouteCollection {
         if let title = body.title {
             let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !t.isEmpty else { throw Abort(.badRequest, reason: "Title cannot be empty.") }
+            try ContentSafetyService.validate(t, field: "item title")
             item.title = t
         }
         if let url = body.url { item.url = url }

@@ -88,6 +88,15 @@ final class User: Model {
     @Field(key: "authentication_version")
     var authenticationVersion: Int
 
+    @OptionalField(key: "terms_accepted_at") var termsAcceptedAt: Date?
+    @OptionalField(key: "terms_version") var termsVersion: String?
+    @OptionalField(key: "suspended_at") var suspendedAt: Date?
+
+    @Field(key: "role") var role: String
+    @OptionalField(key: "admin_totp_secret") var adminTOTPSecret: String?
+    @Field(key: "admin_totp_enabled") var adminTOTPEnabled: Bool
+    @OptionalField(key: "admin_recovery_codes") var adminRecoveryCodes: String?
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 
@@ -112,6 +121,8 @@ final class User: Model {
         self.birthdaySetupCompleted = false
         self.hasLifetimePro = false
         self.authenticationVersion = 0
+        self.role = "user"
+        self.adminTOTPEnabled = false
     }
 
     var derivedAgeBand: String {
@@ -126,6 +137,7 @@ final class User: Model {
 
     var isAgeRestrictedProfile: Bool { matureProfileEnabled && derivedAgeBand == "adult" }
     var canShowAgeRestrictedLists: Bool { derivedAgeBand == "adult" && showAgeRestrictedLists }
+    var isSuspended: Bool { suspendedAt != nil }
 }
 
 extension User {

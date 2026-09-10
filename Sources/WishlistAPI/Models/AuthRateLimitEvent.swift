@@ -18,6 +18,12 @@ final class AuthRateLimitEvent: Model, @unchecked Sendable {
 enum AuthRateLimitService {
     static func enforce(_ req: Request, scope: String, limit: Int, window: TimeInterval) async throws {
         let cutoff = Date().addingTimeInterval(-window)
+        // Keep the rate-limit table bounded while each scope is active. This
+        // also prevents old attempts from becoming an operational data leak.
+        try await AuthRateLimitEvent.query(on: req.db)
+            .filter(\.$scope == scope)
+            .filter(\.$createdAt <= cutoff)
+            .delete()
         let recent = try await AuthRateLimitEvent.query(on: req.db)
             .filter(\.$scope == scope)
             .filter(\.$createdAt > cutoff)

@@ -28,6 +28,8 @@ struct FeedbackController: RouteCollection {
 
     func submit(req: Request) async throws -> Response {
         let user = try req.auth.require(User.self)
+        try await AuthRateLimitService.enforce(req, scope: "feedback:\(try user.requireID())", limit: 8, window: 24 * 60 * 60)
+        try await AuthRateLimitService.enforce(req, scope: "feedback-ip:\(AuthRateLimitService.clientKey(req))", limit: 30, window: 24 * 60 * 60)
         let body = try req.content.decode(SubmitRequest.self)
 
         let category = body.category
@@ -71,11 +73,8 @@ struct FeedbackController: RouteCollection {
     }
 
     func list(req: Request) async throws -> [Response] {
-        let admin = try req.auth.require(User.self)
-
-        guard adminEmails().contains(admin.email.lowercased()) else {
-            throw Abort(.forbidden)
-        }
+        let admin = try AdminAccessService.require(req)
+        await AdminAuditService.record(req, adminID: try admin.requireID(), action: "view_feedback", targetType: "feedback")
 
         return try await UserFeedback.query(on: req.db)
             .with(\.$user)
@@ -92,13 +91,8 @@ struct FeedbackController: RouteCollection {
         submittedBy user: User,
         req: Request
     ) async {
-        let allowedEmails = adminEmails()
-        guard !allowedEmails.isEmpty else { return }
-
         do {
-            let admins = try await User.query(on: req.db)
-                .all()
-                .filter { allowedEmails.contains($0.email.lowercased()) }
+            let admins = try await AdminAccessService.all(req.db)
             let userID = try user.requireID()
             let sharedName = user.displayName?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -124,17 +118,6 @@ struct FeedbackController: RouteCollection {
         } catch {
             req.logger.warning("Feedback was saved, but administrators could not be notified: \(error)")
         }
-    }
-
-    private func adminEmails() -> Set<String> {
-        Set(
-            (Environment.get("METRICS_ADMIN_EMAILS") ?? "")
-                .split(separator: ",")
-                .map {
-                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                        .lowercased()
-                }
-        )
     }
 
     private func response(

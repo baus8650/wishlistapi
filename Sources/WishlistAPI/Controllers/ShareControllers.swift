@@ -74,6 +74,7 @@ struct RecipientShareController: RouteCollection {
     }
 
     struct RecipientNote: Content {
+        let stateID: UUID?
         let note: String
         let authorDisplayName: String?
         let updatedAt: Date?
@@ -163,11 +164,15 @@ struct RecipientShareController: RouteCollection {
     func createDiscussionComment(req: Request) async throws -> DiscussionCommentResponse {
         let (wishlist, viewer) = try await resolveWishlistAndViewer(req: req)
         try await ensureDiscussionAccess(wishlist: wishlist, viewer: viewer, req: req)
+        let viewerID = try viewer.requireID()
+        try await AuthRateLimitService.enforce(req, scope: "shared-discussion:\(viewerID)", limit: 30, window: 60 * 60)
+        try await AuthRateLimitService.enforce(req, scope: "shared-discussion-ip:\(AuthRateLimitService.clientKey(req))", limit: 120, window: 60 * 60)
         let body = try req.content.decode(CreateDiscussionCommentRequest.self)
         let message = body.message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty, message.count <= 1_000 else {
             throw Abort(.badRequest, reason: "Comments must be between 1 and 1,000 characters.")
         }
+        try ContentSafetyService.validate(message, field: "comment")
         if let actorID = viewer.$user.id {
             try await MentionService.validateMentions(
                 in: message,
@@ -366,7 +371,7 @@ struct RecipientShareController: RouteCollection {
                         authorName = nil
                     }
 
-                    return RecipientNote(note: raw, authorDisplayName: authorName, updatedAt: s.updatedAt, isMine: s.$viewer.id == viewerId)
+                    return RecipientNote(stateID: s.id, note: raw, authorDisplayName: authorName, updatedAt: s.updatedAt, isMine: s.$viewer.id == viewerId)
                 }
                 .sorted { (a, b) in
                     // newest first if timestamps exist
@@ -416,6 +421,7 @@ struct RecipientShareController: RouteCollection {
         let body = try req.content.decode(UpsertStateRequest.self)
         let wishlistId = try wishlist.requireID()
         let viewerId = try viewer.requireID()
+        try await AuthRateLimitService.enforce(req, scope: "shared-state:\(viewerId)", limit: 120, window: 60 * 60)
 
         // Enforce wishlist settings: notes can be disabled
         if body.note != nil && !wishlist.allowNotes {
@@ -494,6 +500,9 @@ struct RecipientShareController: RouteCollection {
             try await viewer.save(on: req.db)
         }
 
+        if let note = body.note, wishlist.allowNotes {
+            try ContentSafetyService.validate(note, field: "note")
+        }
         if let note = body.note, wishlist.allowNotes, let actorID = viewer.$user.id {
             try await MentionService.validateMentions(
                 in: note,
@@ -548,7 +557,7 @@ struct RecipientShareController: RouteCollection {
                 let raw = (state.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !raw.isEmpty else { return [] }
                 let author = state.shareName ? viewer.displayName : nil
-                return [RecipientNote(note: raw, authorDisplayName: author, updatedAt: state.updatedAt, isMine: true)]
+                return [RecipientNote(stateID: state.id, note: raw, authorDisplayName: author, updatedAt: state.updatedAt, isMine: true)]
             }()
 
             return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchasedByMe, purchasedByOthers: purchasedQuantity > state.purchasedQuantity, purchasedQuantity: purchasedQuantity, purchasedQuantityByMe: state.purchasedQuantity, purchasedByNames: purchasedByNames, notes: notes)
@@ -556,6 +565,7 @@ struct RecipientShareController: RouteCollection {
             let purchasedQuantity = desiredQuantity ?? 0
             let purchased = purchasedQuantity > 0
             let shareName = body.shareName ?? false
+            if let note = body.note, wishlist.allowNotes { try ContentSafetyService.validate(note, field: "note") }
             let newState = ItemViewerState(itemId: itemID, viewerId: viewerId, purchased: purchased, purchasedQuantity: purchasedQuantity, note: wishlist.allowNotes ? body.note : nil, shareName: shareName)
             try await newState.save(on: req.db)
             if let note = body.note, let actorID = viewer.$user.id {
@@ -582,7 +592,7 @@ struct RecipientShareController: RouteCollection {
                 let raw = (newState.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !raw.isEmpty else { return [] }
                 let author = newState.shareName ? viewer.displayName : nil
-                return [RecipientNote(note: raw, authorDisplayName: author, updatedAt: newState.updatedAt, isMine: true)]
+                return [RecipientNote(stateID: newState.id, note: raw, authorDisplayName: author, updatedAt: newState.updatedAt, isMine: true)]
             }()
 
             let allStates = try await ItemViewerState.query(on: req.db).filter(\.$item.$id == itemID).all()
@@ -612,6 +622,7 @@ struct RecipientShareController: RouteCollection {
             .filter(\.$tokenHash == Tokens.sha256Hex(shareToken))
             .first()
         else { throw Abort(.notFound) }
+        guard link.expiresAt == nil || link.expiresAt! > Date() else { throw Abort(.gone, reason: "This share link has expired.") }
 
         let wishlist = try await link.$wishlist.get(on: req.db)
         let owner = try await wishlist.$owner.get(on: req.db)
@@ -797,6 +808,7 @@ struct OwnerShareController: RouteCollection {
     struct ShareLinkResponse: Content {
         let id: UUID
         let createdAt: Date?
+        let expiresAt: Date?
     }
 
     func boot(routes: any RoutesBuilder) throws {
@@ -837,6 +849,7 @@ struct OwnerShareController: RouteCollection {
         let tokenHash = Tokens.sha256Hex(shareToken)
 
         let link = WishlistShareLink(wishlistId: wishlistID, tokenHash: tokenHash)
+        link.expiresAt = Date().addingTimeInterval(30 * 24 * 60 * 60)
         try await link.save(on: req.db)
 
         return .init(shareToken: shareToken)
@@ -865,7 +878,7 @@ struct OwnerShareController: RouteCollection {
         // id is non-nil for persisted models, but guard defensively
         return links.compactMap { link in
             guard let id = link.id else { return nil }
-            return ShareLinkResponse(id: id, createdAt: link.createdAt)
+            return ShareLinkResponse(id: id, createdAt: link.createdAt, expiresAt: link.expiresAt)
         }
     }
 
@@ -924,6 +937,7 @@ struct OwnerShareController: RouteCollection {
 
         let newToken = try Tokens.randomURLSafeToken()
         link.tokenHash = Tokens.sha256Hex(newToken)
+        link.expiresAt = Date().addingTimeInterval(30 * 24 * 60 * 60)
         try await link.save(on: req.db)
         try await revokeGuestLinkAccess(wishlistID: wishlistID, on: req.db)
 

@@ -129,6 +129,7 @@ struct WishlistController: RouteCollection {
             guard !title.isEmpty else {
                 throw Abort(.badRequest, reason: "Title is required.")
             }
+            try ContentSafetyService.validate(title, field: "list title")
 
             // New lists are private unless the user explicitly chooses public.
             // This protects users who call the API without a visibility field too.
@@ -196,6 +197,7 @@ struct WishlistController: RouteCollection {
         guard !title.isEmpty else {
             throw Abort(.badRequest, reason: "Title is required.")
         }
+        try ContentSafetyService.validate(title, field: "list title")
 
         wishlist.title = title
         try await wishlist.save(on: req.db)

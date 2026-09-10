@@ -14,7 +14,9 @@ struct UserTokenAuthenticator: AsyncBearerAuthenticator {
 
         guard let userId = UUID(uuidString: payload.sub.value) else { return }
         if let user = try await User.find(userId, on: req.db),
+           !user.isSuspended,
            (payload.ver ?? 0) == user.authenticationVersion {
+            req.storage[AdminMFAStorageKey.self] = payload.adminMFA == true
             req.auth.login(user)
         }
     }

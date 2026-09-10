@@ -29,7 +29,8 @@ struct WebMetricsController {
     }
 
     func summary(req: Request) async throws -> Summary {
-        try requireAdmin(req)
+        let admin = try AdminAccessService.require(req)
+        await AdminAuditService.record(req, adminID: try admin.requireID(), action: "view_metrics", targetType: "metrics")
         let days = min(max(req.query[Int.self, at: "days"] ?? 30, 1), 365)
         let start = Calendar.current.date(byAdding: .day, value: -(days - 1), to: Calendar.current.startOfDay(for: Date()))!
         let events = try await WebMetricEvent.query(on: req.db).filter(\.$createdAt >= start).all()
@@ -48,7 +49,8 @@ struct WebMetricsController {
     }
 
     func accounts(req: Request) async throws -> [AccountDirectoryEntry] {
-        try requireAdmin(req)
+        let admin = try AdminAccessService.require(req)
+        await AdminAuditService.record(req, adminID: try admin.requireID(), action: "view_account_directory", targetType: "accounts")
         let query = (req.query[String.self, at: "q"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let limit = min(max(req.query[Int.self, at: "limit"] ?? 500, 1), 1_000)
         let accountsQuery = User.query(on: req.db)
@@ -73,11 +75,4 @@ struct WebMetricsController {
         }
     }
 
-    private func requireAdmin(_ req: Request) throws {
-        let user = try req.auth.require(User.self)
-        let allowed = Set((Environment.get("METRICS_ADMIN_EMAILS") ?? "")
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
-        guard allowed.contains(user.email.lowercased()) else { throw Abort(.forbidden) }
-    }
 }

@@ -16,11 +16,13 @@ struct RegisterRequest: Content {
     /// Honeypot field for low-effort automated registrations. Real clients
     /// leave it empty; a filled value is rejected before account creation.
     let website: String?
+    let acceptedTermsVersion: String?
 }
 
 struct LoginRequest: Content {
     let email: String
     let password: String
+    let totpCode: String?
 }
 
 struct ForgotPasswordRequest: Content {
@@ -38,6 +40,8 @@ struct ResetPasswordRequest: Content {
 
 struct GoogleLoginRequest: Content {
     let idToken: String
+    let acceptedTermsVersion: String?
+    let totpCode: String?
 }
 
 private struct GoogleTokenInfo: Decodable {
@@ -109,6 +113,7 @@ struct TokenResponse: Content {
 
 struct AuthController: RouteCollection {
     private static let accessTokenTTLSeconds: Int = 60 * 60 * 24 * 30 // 30 days
+    private static let currentTermsVersion = "2026-09-09"
 
     func boot(routes: any RoutesBuilder) throws {
         let auth = routes.grouped("auth")
@@ -128,6 +133,10 @@ struct AuthController: RouteCollection {
         }
         let email = body.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let displayName = body.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard body.acceptedTermsVersion == Self.currentTermsVersion else {
+            throw Abort(.badRequest, reason: "Accept the Terms of Use and Privacy Policy to create an account.")
+        }
 
         let clientKey = AuthRateLimitService.clientKey(req)
         try await AuthRateLimitService.enforce(req, scope: "register-ip:\(clientKey)", limit: 10, window: 60 * 60)
@@ -173,6 +182,8 @@ struct AuthController: RouteCollection {
             passwordHash: hash,
             displayName: displayName?.isEmpty == false ? displayName : nil
         )
+        user.termsAcceptedAt = Date()
+        user.termsVersion = Self.currentTermsVersion
         try await user.save(on: req.db)
         do {
             try await createAndSendEmailVerification(for: user, req: req)
@@ -207,7 +218,20 @@ struct AuthController: RouteCollection {
             throw Abort(.forbidden, reason: "Verify your email before signing in. You can request another verification link from the sign-in screen.")
         }
 
-        return try await tokenResponse(for: user, req: req)
+        let usedAdminMFA: Bool
+        if user.adminTOTPEnabled && AdminAccessService.isAdmin(user) {
+            guard let code = body.totpCode,
+                  TOTPService.isValid(code: code, secret: user.adminTOTPSecret ?? "") || TOTPService.consumeRecoveryCode(code, from: user)
+            else {
+                throw Abort(.unauthorized, reason: "Admin verification required. Enter your authenticator code or a recovery code.")
+            }
+            usedAdminMFA = true
+            try await user.save(on: req.db)
+        } else {
+            usedAdminMFA = false
+        }
+
+        return try await tokenResponse(for: user, req: req, adminMFA: usedAdminMFA)
     }
 
     func verifyEmail(req: Request) async throws -> TokenResponse {
@@ -386,6 +410,9 @@ struct AuthController: RouteCollection {
                 .first() {
                 user = existingUser
             } else {
+                guard body.acceptedTermsVersion == Self.currentTermsVersion else {
+                    throw Abort(.badRequest, reason: "Accept the Terms of Use and Privacy Policy to create an account.")
+                }
                 var generator = SystemRandomNumberGenerator()
                 let randomPassword = (0..<32).map { _ in
                     String(format: "%02x", UInt8.random(in: .min ... .max, using: &generator))
@@ -396,6 +423,8 @@ struct AuthController: RouteCollection {
                     displayName: profile.name?.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
                 user.emailVerifiedAt = Date()
+                user.termsAcceptedAt = Date()
+                user.termsVersion = Self.currentTermsVersion
                 try await user.save(on: req.db)
             }
 
@@ -419,7 +448,8 @@ struct AuthController: RouteCollection {
                     linked.user.emailVerifiedAt = Date()
                     try await linked.user.save(on: req.db)
                 }
-                return try await tokenResponse(for: linked.user, req: req)
+                let usedAdminMFA = try await verifyAdminMFAIfNeeded(user: linked.user, code: body.totpCode, req: req)
+                return try await tokenResponse(for: linked.user, req: req, adminMFA: usedAdminMFA)
             }
         }
 
@@ -431,7 +461,19 @@ struct AuthController: RouteCollection {
             try await user.save(on: req.db)
         }
 
-        return try await tokenResponse(for: user, req: req)
+        let usedAdminMFA = try await verifyAdminMFAIfNeeded(user: user, code: body.totpCode, req: req)
+        return try await tokenResponse(for: user, req: req, adminMFA: usedAdminMFA)
+    }
+
+    private func verifyAdminMFAIfNeeded(user: User, code: String?, req: Request) async throws -> Bool {
+        guard user.adminTOTPEnabled && AdminAccessService.isAdmin(user) else { return false }
+        guard let code,
+              TOTPService.isValid(code: code, secret: user.adminTOTPSecret ?? "") || TOTPService.consumeRecoveryCode(code, from: user)
+        else {
+            throw Abort(.unauthorized, reason: "Admin verification required. Enter your authenticator code or a recovery code.")
+        }
+        try await user.save(on: req.db)
+        return true
     }
 
     private func createAndSendEmailVerification(for user: User, req: Request) async throws {
@@ -537,10 +579,10 @@ struct AuthController: RouteCollection {
         }
     }
 
-    private func tokenResponse(for user: User, req: Request) async throws -> TokenResponse {
+    private func tokenResponse(for user: User, req: Request, adminMFA: Bool = false) async throws -> TokenResponse {
         let userID = try user.requireID()
         let exp = ExpirationClaim(value: Date().addingTimeInterval(TimeInterval(Self.accessTokenTTLSeconds)))
-        let payload = AccessTokenPayload(sub: .init(value: userID.uuidString), exp: exp, ver: user.authenticationVersion)
+        let payload = AccessTokenPayload(sub: .init(value: userID.uuidString), exp: exp, ver: user.authenticationVersion, adminMFA: adminMFA)
         return TokenResponse(
             accessToken: try await req.jwt.sign(payload),
             tokenType: "Bearer",

@@ -20,6 +20,7 @@ public func configure(_ app: Application) async throws {
         ]
     )
     app.middleware.use(CORSMiddleware(configuration: corsConfiguration), at: .beginning)
+    app.middleware.use(SecurityHeadersMiddleware(), at: .beginning)
 
     // MARK: Database
 
@@ -132,6 +133,10 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddAdultConfirmationToWishlistViewer())
     app.migrations.add(AddAuthenticationVersion())
     app.migrations.add(AddContentTargetsToUserReports())
+    app.migrations.add(AddSafetyModerationFields())
+    app.migrations.add(AddAdminSecurityControls())
+    app.migrations.add(AddAdminTOTP())
+    app.migrations.add(BackfillShareLinkExpiry())
 
     // MARK: Routes
     try routes(app)

@@ -177,7 +177,10 @@ enum MentionService {
         }
         guard !eligibleIDs.isEmpty else { return }
 
-        let message = "\(actorName) mentioned you \(context)"
+        // Lock-screen notifications must not disclose a person's name, list,
+        // or private comment/note content. The in-app activity view still
+        // identifies the event after the account is unlocked.
+        let message = "Open Hushful to view the mention."
         for userID in eligibleIDs {
             try await ActivityService.create(
                 userID: userID,
