@@ -181,7 +181,7 @@ extension User {
             birthdayMonth: self.birthdayMonth,
             birthdayDay: self.birthdayDay,
             birthdayVisibility: self.birthdayVisibility,
-            birthdaySetupCompleted: self.birthdayYear != nil && self.birthdayMonth != nil && self.birthdayDay != nil,
+            birthdaySetupCompleted: self.birthdaySetupCompleted,
             hasAvatar: self.avatarData != nil,
             isPro: self.hasLifetimePro,
             createdAt: self.createdAt,

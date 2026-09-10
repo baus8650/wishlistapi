@@ -128,6 +128,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateProfileDetails())
     app.migrations.add(AddAgeSafetyFields())
     app.migrations.add(AddBirthdayYearToUser())
+    app.migrations.add(NormalizeBirthdaySetupState())
     app.migrations.add(AddExplicitMatureContentControls())
     app.migrations.add(AddAgeRestrictedListVisibilityPreference())
     app.migrations.add(AddAdultConfirmationToWishlistViewer())

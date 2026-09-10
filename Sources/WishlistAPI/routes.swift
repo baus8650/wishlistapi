@@ -140,7 +140,7 @@ func routes(_ app: Application) throws {
                   user.birthdayYear != nil,
                   user.birthdayMonth != nil,
                   user.birthdayDay != nil
-            else { throw Abort(.badRequest, reason: "Add your birthday before completing onboarding.") }
+            else { throw Abort(.badRequest, reason: "Enter your birthday before finishing account setup.") }
             user.onboardingVersion = onboardingVersion
         }
         try await user.save(on: req.db)

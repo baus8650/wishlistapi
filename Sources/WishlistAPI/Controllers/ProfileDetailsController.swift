@@ -264,7 +264,7 @@ struct ProfileDetailsController: RouteCollection {
             birthdayDay: user.birthdayDay,
             birthdayYear: user.birthdayYear,
             birthdayVisibility: user.birthdayVisibility,
-            birthdaySetupCompleted: user.birthdayYear != nil && user.birthdayMonth != nil && user.birthdayDay != nil,
+            birthdaySetupCompleted: user.birthdaySetupCompleted,
             attributes: attributes.map { $0.dto() }
         )
     }
