@@ -91,7 +91,21 @@ enum GooglePlayPurchaseService {
     }
 
     static func obfuscatedAccountID(for userID: UUID) -> String {
-        Tokens.sha256Hex(userID.uuidString)
+        // Billing clients should hash the UUID's canonical lowercase form.
+        // Keep the single-value helper stable for new purchases.
+        Tokens.sha256Hex(userID.uuidString.lowercased())
+    }
+
+    static func acceptedObfuscatedAccountIDs(for userID: UUID) -> Set<String> {
+        // Older Android builds hashed the UUID exactly as it arrived in JSON,
+        // while the server previously hashed UUID.uuidString. UUID casing is
+        // not identity-significant, but it does change a SHA-256 result. Accept
+        // both representations during migration while still requiring that the
+        // purchase is bound to this exact Hushful user.
+        [
+            Tokens.sha256Hex(userID.uuidString.lowercased()),
+            Tokens.sha256Hex(userID.uuidString),
+        ]
     }
 
     private static func accessToken(on request: Request) async throws -> String {
