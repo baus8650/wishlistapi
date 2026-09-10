@@ -32,7 +32,9 @@ struct AdminTOTPController: RouteCollection {
 
     func enroll(req: Request) async throws -> AdminTOTPEnrollmentResponse {
         let user = try AdminAccessService.require(req)
-        try await AuthRateLimitService.enforce(req, scope: "admin-totp-enroll:\(try user.requireID())", limit: 5, window: 24 * 60 * 60)
+        // An enrollment attempt rotates the pending secret. Keep this short so an
+        // admin who scans the wrong secret is not locked out for an entire day.
+        try await AuthRateLimitService.enforce(req, scope: "admin-totp-enroll:\(try user.requireID())", limit: 5, window: 15 * 60)
         let secret = TOTPService.generateSecret()
         let recoveryCodes = (0..<8).map { _ in TOTPService.generateRecoveryCode() }
         user.adminTOTPSecret = secret
