@@ -18,7 +18,10 @@ final class UserFeedback: Model, Content {
     @OptionalField(key: "purchase_provider") var purchaseProvider: String?
     @OptionalField(key: "purchase_order_id") var purchaseOrderID: String?
     @OptionalField(key: "purchase_at") var purchaseAt: Date?
+    @Field(key: "status") var status: String
+    @Field(key: "archived") var archived: Bool
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+    @Timestamp(key: "updated_at", on: .update) var updatedAt: Date?
 
     init() {}
 
@@ -33,7 +36,9 @@ final class UserFeedback: Model, Content {
         purchaseEvidenceDetails: String? = nil,
         purchaseProvider: String? = nil,
         purchaseOrderID: String? = nil,
-        purchaseAt: Date? = nil
+        purchaseAt: Date? = nil,
+        status: String = "open",
+        archived: Bool = false
     ) {
         self.id = id
         self.$user.id = userID
@@ -46,6 +51,8 @@ final class UserFeedback: Model, Content {
         self.purchaseProvider = purchaseProvider
         self.purchaseOrderID = purchaseOrderID
         self.purchaseAt = purchaseAt
+        self.status = status
+        self.archived = archived
     }
 }
 

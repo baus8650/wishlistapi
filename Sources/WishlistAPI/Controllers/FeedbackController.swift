@@ -32,12 +32,41 @@ struct FeedbackController: RouteCollection {
         let purchaseProvider: String?
         let purchaseOrderID: String?
         let purchaseAt: Date?
+        let status: String
+        let archived: Bool
         let createdAt: Date?
+    }
+
+    struct ReplyResponse: Content {
+        let id: UUID
+        let feedbackID: UUID
+        let authorRole: String
+        let authorDisplayName: String?
+        let message: String
+        let createdAt: Date?
+    }
+
+    struct ThreadResponse: Content {
+        let feedback: Response
+        let replies: [ReplyResponse]
+    }
+
+    struct ReplyRequest: Content {
+        let message: String
     }
 
     func boot(routes: any RoutesBuilder) throws {
         routes.post("feedback", use: submit)
         routes.get("admin", "feedback", use: list)
+        routes.get("feedback", use: mine)
+        routes.get("feedback", ":feedbackID", use: userThread)
+        routes.post("feedback", ":feedbackID", "replies", use: userReply)
+        routes.get("admin", "feedback", ":feedbackID", use: adminThread)
+        routes.post("admin", "feedback", ":feedbackID", "replies", use: adminReply)
+        routes.post("admin", "feedback", ":feedbackID", "close", use: close)
+        routes.post("admin", "feedback", ":feedbackID", "reopen", use: reopen)
+        routes.post("admin", "feedback", ":feedbackID", "archive", use: archive)
+        routes.post("admin", "feedback", ":feedbackID", "unarchive", use: unarchive)
     }
 
     func submit(req: Request) async throws -> Response {
@@ -103,14 +132,157 @@ struct FeedbackController: RouteCollection {
         let admin = try AdminAccessService.require(req)
         await AdminAuditService.record(req, adminID: try admin.requireID(), action: "view_feedback", targetType: "feedback")
 
-        return try await UserFeedback.query(on: req.db)
+        var query = UserFeedback.query(on: req.db)
             .with(\.$user)
+        if req.query[Bool.self, at: "includeArchived"] != true {
+            query = query.filter(\.$archived == false)
+        }
+        return try await query.sort(\.$createdAt, .descending).limit(500).all().map { try response($0, $0.user) }
+    }
+
+    func mine(req: Request) async throws -> [Response] {
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
+        return try await UserFeedback.query(on: req.db)
+            .filter(\.$user.$id == userID)
             .sort(\.$createdAt, .descending)
-            .limit(500)
+            .limit(100)
             .all()
-            .map {
-                try response($0, $0.user)
-            }
+            .map { try response($0, user) }
+    }
+
+    func userThread(req: Request) async throws -> ThreadResponse {
+        let user = try req.auth.require(User.self)
+        let feedback = try await ownedFeedback(req: req, userID: try user.requireID())
+        return try await threadResponse(feedback, user: user, on: req.db)
+    }
+
+    func adminThread(req: Request) async throws -> ThreadResponse {
+        let admin = try AdminAccessService.require(req)
+        guard let id = req.parameters.get("feedbackID", as: UUID.self),
+              let feedback = try await UserFeedback.query(on: req.db).filter(\.$id == id).with(\.$user).first()
+        else { throw Abort(.notFound) }
+        await AdminAuditService.record(req, adminID: try admin.requireID(), action: "view_feedback_thread", targetType: "feedback", targetID: id)
+        return try await threadResponse(feedback, user: feedback.user, on: req.db)
+    }
+
+    func userReply(req: Request) async throws -> ThreadResponse {
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
+        try await AuthRateLimitService.enforce(req, scope: "feedback-reply:\(userID)", limit: 30, window: 24 * 60 * 60)
+        let feedback = try await ownedFeedback(req: req, userID: userID)
+        let message = try validatedReplyMessage(req: req)
+        let reply = UserFeedbackReply(feedbackID: try feedback.requireID(), authorID: userID, authorRole: "user", message: message)
+        try await reply.save(on: req.db)
+        feedback.status = "open"
+        feedback.archived = false
+        try await feedback.save(on: req.db)
+        await notifyAdmins(of: feedback, summary: "A user replied to their \(feedback.category) feedback.", actorID: userID, kind: "feedback_reply", title: "Feedback reply received", req: req)
+        return try await threadResponse(feedback, user: user, on: req.db)
+    }
+
+    func adminReply(req: Request) async throws -> ThreadResponse {
+        let admin = try AdminAccessService.require(req)
+        let adminID = try admin.requireID()
+        guard let id = req.parameters.get("feedbackID", as: UUID.self),
+              let feedback = try await UserFeedback.query(on: req.db).filter(\.$id == id).with(\.$user).first()
+        else { throw Abort(.notFound) }
+        let message = try validatedReplyMessage(req: req)
+        let reply = UserFeedbackReply(feedbackID: id, authorID: adminID, authorRole: "admin", message: message)
+        try await reply.save(on: req.db)
+        feedback.status = "open"
+        feedback.archived = false
+        try await feedback.save(on: req.db)
+        await notifyUser(of: feedback, actorID: adminID, title: "Reply to your feedback", message: "Hushful support replied to your feedback.", req: req)
+        await AdminAuditService.record(req, adminID: adminID, action: "reply_feedback", targetType: "feedback", targetID: id)
+        return try await threadResponse(feedback, user: feedback.user, on: req.db)
+    }
+
+    func close(req: Request) async throws -> Response {
+        try await updateStatus(req: req, status: "closed", action: "close_feedback")
+    }
+
+    func reopen(req: Request) async throws -> Response {
+        try await updateStatus(req: req, status: "open", action: "reopen_feedback")
+    }
+
+    func archive(req: Request) async throws -> Response {
+        try await updateArchive(req: req, archived: true, action: "archive_feedback")
+    }
+
+    func unarchive(req: Request) async throws -> Response {
+        try await updateArchive(req: req, archived: false, action: "unarchive_feedback")
+    }
+
+    private func ownedFeedback(req: Request, userID: UUID) async throws -> UserFeedback {
+        guard let id = req.parameters.get("feedbackID", as: UUID.self),
+              let feedback = try await UserFeedback.query(on: req.db)
+                .filter(\.$id == id)
+                .filter(\.$user.$id == userID)
+                .with(\.$user)
+                .first()
+        else { throw Abort(.notFound) }
+        return feedback
+    }
+
+    private func validatedReplyMessage(req: Request) throws -> String {
+        let message = try req.content.decode(ReplyRequest.self).message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty, message.count <= 4_000 else {
+            throw Abort(.badRequest, reason: "Reply must be between 1 and 4,000 characters.")
+        }
+        return message
+    }
+
+    private func threadResponse(_ feedback: UserFeedback, user: User, on db: any Database) async throws -> ThreadResponse {
+        let feedbackID = try feedback.requireID()
+        let replies = try await UserFeedbackReply.query(on: db)
+            .filter(\.$feedback.$id == feedbackID)
+            .with(\.$author)
+            .sort(\.$createdAt, .ascending)
+            .all()
+            .map(replyResponse)
+        return ThreadResponse(feedback: try response(feedback, user), replies: replies)
+    }
+
+    private func replyResponse(_ reply: UserFeedbackReply) throws -> ReplyResponse {
+        ReplyResponse(
+            id: try reply.requireID(),
+            feedbackID: reply.$feedback.id,
+            authorRole: reply.authorRole,
+            // Replies are shown as "You" on the user's device and as the
+            // submitter account in the admin console; do not leak a display
+            // name from an anonymous feedback submission.
+            authorDisplayName: reply.authorRole == "admin" ? "Hushful Support" : nil,
+            message: reply.message,
+            createdAt: reply.createdAt
+        )
+    }
+
+    private func updateStatus(req: Request, status: String, action: String) async throws -> Response {
+        let admin = try AdminAccessService.require(req)
+        let adminID = try admin.requireID()
+        guard let id = req.parameters.get("feedbackID", as: UUID.self),
+              let feedback = try await UserFeedback.query(on: req.db).filter(\.$id == id).with(\.$user).first()
+        else { throw Abort(.notFound) }
+        feedback.status = status
+        try await feedback.save(on: req.db)
+        await AdminAuditService.record(req, adminID: adminID, action: action, targetType: "feedback", targetID: id)
+        if status == "closed" {
+            await notifyUser(of: feedback, actorID: adminID, title: "Feedback closed", message: "Hushful marked your feedback as resolved. You can reply to reopen it.", req: req)
+        }
+        return try response(feedback, feedback.user)
+    }
+
+    private func updateArchive(req: Request, archived: Bool, action: String) async throws -> Response {
+        let admin = try AdminAccessService.require(req)
+        let adminID = try admin.requireID()
+        guard let id = req.parameters.get("feedbackID", as: UUID.self),
+              let feedback = try await UserFeedback.query(on: req.db).filter(\.$id == id).with(\.$user).first()
+        else { throw Abort(.notFound) }
+        feedback.archived = archived
+        try await feedback.save(on: req.db)
+        await AdminAuditService.record(req, adminID: adminID, action: action, targetType: "feedback", targetID: id)
+        return try response(feedback, feedback.user)
     }
 
     private func notifyAdmins(
@@ -119,7 +291,6 @@ struct FeedbackController: RouteCollection {
         req: Request
     ) async {
         do {
-            let admins = try await AdminAccessService.all(req.db)
             let userID = try user.requireID()
             let sharedName = user.displayName?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -130,12 +301,22 @@ struct FeedbackController: RouteCollection {
                 "\($0) submitted \(feedback.category) feedback on \(feedback.platform)."
             } ?? "New \(feedback.category) feedback was submitted on \(feedback.platform)."
 
+            await notifyAdmins(of: feedback, summary: summary, actorID: userID, req: req)
+        } catch {
+            req.logger.warning("Feedback was saved, but administrators could not be notified: \(error)")
+        }
+    }
+
+    private func notifyAdmins(of feedback: UserFeedback, summary: String, actorID: UUID, kind: String = "feedback_submitted", title: String = "New feedback received", req: Request) async {
+        do {
+            let admins = try await AdminAccessService.all(req.db)
+
             for admin in admins {
                 try await ActivityService.create(
                     userID: try admin.requireID(),
-                    actorID: userID,
-                    kind: "feedback_submitted",
-                    title: "New feedback received",
+                    actorID: actorID,
+                    kind: kind,
+                    title: title,
                     message: summary,
                     on: req.db,
                     client: req.client,
@@ -143,7 +324,24 @@ struct FeedbackController: RouteCollection {
                 )
             }
         } catch {
-            req.logger.warning("Feedback was saved, but administrators could not be notified: \(error)")
+            req.logger.warning("Feedback update was saved, but administrators could not be notified: \(error)")
+        }
+    }
+
+    private func notifyUser(of feedback: UserFeedback, actorID: UUID, title: String, message: String, req: Request) async {
+        do {
+            try await ActivityService.create(
+                userID: feedback.$user.id,
+                actorID: actorID,
+                kind: "feedback_reply",
+                title: title,
+                message: message,
+                on: req.db,
+                client: req.client,
+                logger: req.logger
+            )
+        } catch {
+            req.logger.warning("Feedback update was saved, but the user could not be notified: \(error)")
         }
     }
 
@@ -168,6 +366,8 @@ struct FeedbackController: RouteCollection {
             purchaseProvider: feedback.purchaseProvider,
             purchaseOrderID: feedback.purchaseOrderID,
             purchaseAt: feedback.purchaseAt,
+            status: feedback.status,
+            archived: feedback.archived,
             createdAt: feedback.createdAt
         )
     }
