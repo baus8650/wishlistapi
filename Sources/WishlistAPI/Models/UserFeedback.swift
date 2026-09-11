@@ -15,6 +15,9 @@ final class UserFeedback: Model, Content {
     // distinguish a verified recovery request from an unverified claim.
     @OptionalField(key: "purchase_evidence") var purchaseEvidence: String?
     @OptionalField(key: "purchase_evidence_details") var purchaseEvidenceDetails: String?
+    @OptionalField(key: "purchase_provider") var purchaseProvider: String?
+    @OptionalField(key: "purchase_order_id") var purchaseOrderID: String?
+    @OptionalField(key: "purchase_at") var purchaseAt: Date?
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
 
     init() {}
@@ -27,7 +30,10 @@ final class UserFeedback: Model, Content {
         platform: String,
         shareName: Bool,
         purchaseEvidence: String? = nil,
-        purchaseEvidenceDetails: String? = nil
+        purchaseEvidenceDetails: String? = nil,
+        purchaseProvider: String? = nil,
+        purchaseOrderID: String? = nil,
+        purchaseAt: Date? = nil
     ) {
         self.id = id
         self.$user.id = userID
@@ -37,6 +43,9 @@ final class UserFeedback: Model, Content {
         self.shareName = shareName
         self.purchaseEvidence = purchaseEvidence
         self.purchaseEvidenceDetails = purchaseEvidenceDetails
+        self.purchaseProvider = purchaseProvider
+        self.purchaseOrderID = purchaseOrderID
+        self.purchaseAt = purchaseAt
     }
 }
 

@@ -29,6 +29,9 @@ struct FeedbackController: RouteCollection {
         let shareName: Bool
         let purchaseEvidence: String?
         let purchaseEvidenceDetails: String?
+        let purchaseProvider: String?
+        let purchaseOrderID: String?
+        let purchaseAt: Date?
         let createdAt: Date?
     }
 
@@ -72,15 +75,22 @@ struct FeedbackController: RouteCollection {
         let purchaseEvidence = category == "purchase"
             ? await self.purchaseEvidence(for: body.purchaseProof, platform: platform, userID: try user.requireID(), on: req)
             : nil
+        // Purchase claims are support cases, not anonymous feedback. Always
+        // retain the authenticated account identity so an administrator can
+        // compare the claim with the store evidence and contact the user.
+        let shareName = category == "purchase" ? true : (body.shareName ?? false)
 
         let feedback = UserFeedback(
             userID: try user.requireID(),
             category: category,
             message: message,
             platform: platform,
-            shareName: body.shareName ?? false,
+            shareName: shareName,
             purchaseEvidence: purchaseEvidence?.status,
-            purchaseEvidenceDetails: purchaseEvidence?.details
+            purchaseEvidenceDetails: purchaseEvidence?.details,
+            purchaseProvider: purchaseEvidence?.provider,
+            purchaseOrderID: purchaseEvidence?.orderID,
+            purchaseAt: purchaseEvidence?.purchasedAt
         )
 
         try await feedback.save(on: req.db)
@@ -155,6 +165,9 @@ struct FeedbackController: RouteCollection {
             shareName: feedback.shareName,
             purchaseEvidence: feedback.purchaseEvidence,
             purchaseEvidenceDetails: feedback.purchaseEvidenceDetails,
+            purchaseProvider: feedback.purchaseProvider,
+            purchaseOrderID: feedback.purchaseOrderID,
+            purchaseAt: feedback.purchaseAt,
             createdAt: feedback.createdAt
         )
     }
@@ -162,6 +175,23 @@ struct FeedbackController: RouteCollection {
     private struct PurchaseEvidence {
         let status: String
         let details: String
+        let provider: String?
+        let orderID: String?
+        let purchasedAt: Date?
+
+        init(
+            status: String,
+            details: String,
+            provider: String? = nil,
+            orderID: String? = nil,
+            purchasedAt: Date? = nil
+        ) {
+            self.status = status
+            self.details = details
+            self.provider = provider
+            self.orderID = orderID
+            self.purchasedAt = purchasedAt
+        }
     }
 
     /// Returns a conservative, server-derived status. An invalid or missing
@@ -174,19 +204,47 @@ struct FeedbackController: RouteCollection {
         on req: Request
     ) async -> PurchaseEvidence {
         do {
-            if let apple = try await AppleProPurchase.query(on: req.db)
+            let applePurchases = try await AppleProPurchase.query(on: req.db)
                 .filter(\.$user.$id == userID)
-                .filter(\.$active == true)
-                .first() {
-                _ = apple
-                return .init(status: "verified_current_account", details: "Verified active Apple purchase is linked to this Hushful account.")
+                .sort(\.$signedAt, .descending)
+                .all()
+            let googlePurchases = try await GooglePlayProPurchase.query(on: req.db)
+                .filter(\.$user.$id == userID)
+                .sort(\.$purchasedAt, .descending)
+                .all()
+            if let apple = applePurchases.first(where: { $0.active }) {
+                return .init(
+                    status: "verified_current_account",
+                    details: "Verified active Apple purchase is linked to this Hushful account.",
+                    provider: "apple",
+                    purchasedAt: apple.signedAt
+                )
             }
-            if let google = try await GooglePlayProPurchase.query(on: req.db)
-                .filter(\.$user.$id == userID)
-                .filter(\.$active == true)
-                .first() {
-                _ = google
-                return .init(status: "verified_current_account", details: "Verified active Google Play purchase is linked to this Hushful account.")
+            if let google = googlePurchases.first(where: { $0.active }) {
+                return .init(
+                    status: "verified_current_account",
+                    details: "Verified active Google Play purchase is linked to this Hushful account.",
+                    provider: "google_play",
+                    orderID: google.orderID,
+                    purchasedAt: google.purchasedAt
+                )
+            }
+            if let apple = applePurchases.first {
+                return .init(
+                    status: "verified_current_account_inactive",
+                    details: "A verified Apple purchase exists for this Hushful account, but it is not currently active.",
+                    provider: "apple",
+                    purchasedAt: apple.signedAt
+                )
+            }
+            if let google = googlePurchases.first {
+                return .init(
+                    status: "verified_current_account_inactive",
+                    details: "A verified Google Play purchase exists for this Hushful account, but it is not currently active.",
+                    provider: "google_play",
+                    orderID: google.orderID,
+                    purchasedAt: google.purchasedAt
+                )
             }
         } catch {
             req.logger.warning("Could not inspect existing Pro purchases for feedback: \(error)")
@@ -206,12 +264,12 @@ struct FeedbackController: RouteCollection {
             do {
                 let transaction = try await ProPurchaseController.verifyForEvidence(signed, on: req)
                 if transaction.appAccountToken == userID {
-                    return .init(status: "verified_current_account", details: "Apple verified a Pro purchase linked to this Hushful account.")
+                    return .init(status: "verified_current_account", details: "Apple verified a Pro purchase linked to this Hushful account.", provider: "apple", purchasedAt: transaction.signedDate)
                 }
                 if transaction.appAccountToken != nil {
-                    return .init(status: "verified_other_account", details: "Apple verified a Pro purchase linked to a different Hushful account.")
+                    return .init(status: "verified_other_account", details: "Apple verified a Pro purchase linked to a different Hushful account.", provider: "apple", purchasedAt: transaction.signedDate)
                 }
-                return .init(status: "verified_unbound_purchase", details: "Apple verified a Pro purchase, but it has no Hushful account binding.")
+                return .init(status: "verified_unbound_purchase", details: "Apple verified a Pro purchase, but it has no Hushful account binding.", provider: "apple", purchasedAt: transaction.signedDate)
             } catch {
                 req.logger.info("Apple purchase evidence could not be verified: \(error)")
                 return .init(status: "unverified_claim", details: "Apple could not verify the submitted purchase proof.")
@@ -232,11 +290,11 @@ struct FeedbackController: RouteCollection {
                 }
                 if let bound = purchase.obfuscatedExternalAccountID {
                     if GooglePlayPurchaseService.acceptedObfuscatedAccountIDs(for: userID).contains(bound) {
-                        return .init(status: "verified_current_account", details: "Google Play verified a Pro purchase linked to this Hushful account.")
+                        return .init(status: "verified_current_account", details: "Google Play verified a Pro purchase linked to this Hushful account.", provider: "google_play", orderID: purchase.orderID, purchasedAt: purchase.purchasedAt)
                     }
-                    return .init(status: "verified_other_account", details: "Google Play verified a Pro purchase linked to a different Hushful account.")
+                    return .init(status: "verified_other_account", details: "Google Play verified a Pro purchase linked to a different Hushful account.", provider: "google_play", orderID: purchase.orderID, purchasedAt: purchase.purchasedAt)
                 }
-                return .init(status: "verified_unbound_purchase", details: "Google Play verified a Pro purchase, but it has no Hushful account binding.")
+                return .init(status: "verified_unbound_purchase", details: "Google Play verified a Pro purchase, but it has no Hushful account binding.", provider: "google_play", orderID: purchase.orderID, purchasedAt: purchase.purchasedAt)
             } catch {
                 req.logger.info("Google Play purchase evidence could not be verified: \(error)")
                 return .init(status: "unverified_claim", details: "Google Play could not verify the submitted purchase proof.")
