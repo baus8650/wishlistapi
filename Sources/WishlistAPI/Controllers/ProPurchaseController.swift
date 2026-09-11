@@ -14,7 +14,7 @@ struct ProPurchaseController: RouteCollection {
         routes.post("pro", "apple", "notifications", use: notification)
     }
 
-    private func verifier() throws -> SignedDataVerifier {
+    static func verifier() throws -> SignedDataVerifier {
         let rawID = Environment.get("APPLE_APP_ID") ?? "6805499302"
         guard let appID = Int64(rawID), appID > 0,
               let roots = Environment.get("APPLE_ROOT_CERTIFICATE_PATHS"), !roots.isEmpty else {
@@ -28,30 +28,43 @@ struct ProPurchaseController: RouteCollection {
         return try SignedDataVerifier(rootCertificates: certificates, bundleId: "com.bausch.hushful", appAppleId: appID, environment: environment, enableOnlineChecks: true)
     }
 
-    private func decode(_ signed: String, using verifier: SignedDataVerifier) async throws -> JWSTransactionDecodedPayload {
+    static func decode(_ signed: String, using verifier: SignedDataVerifier, requireAppAccountToken: Bool = true) async throws -> JWSTransactionDecodedPayload {
         guard signed.utf8.count <= 32_000 else { throw Abort(.payloadTooLarge) }
         guard case .valid(let transaction) = await verifier.verifyAndDecodeTransaction(signedTransaction: signed) else {
             throw Abort(.badRequest, reason: "Apple could not verify this Hushful Pro purchase.")
         }
-        try Self.validatePurchase(transaction)
+        try Self.validatePurchase(transaction, requireAppAccountToken: requireAppAccountToken)
         return transaction
     }
 
-    static func validatePurchase(_ transaction: JWSTransactionDecodedPayload, now: Date = Date()) throws {
+    static func validatePurchase(
+        _ transaction: JWSTransactionDecodedPayload,
+        now: Date = Date(),
+        requireAppAccountToken: Bool = true
+    ) throws {
         guard transaction.productId == "com.bausch.hushful.pro.lifetime",
               transaction.type == .nonConsumable,
-              transaction.appAccountToken != nil,
               let originalID = transaction.originalTransactionId, !originalID.isEmpty,
               let signedDate = transaction.signedDate,
               signedDate <= now.addingTimeInterval(300) else {
             throw Abort(.badRequest, reason: "Apple could not verify this Hushful Pro purchase.")
         }
+        if requireAppAccountToken, transaction.appAccountToken == nil {
+            throw Abort(.badRequest, reason: "Apple could not verify this Hushful Pro purchase.")
+        }
+    }
+
+    /// Verifies a support-submitted transaction without granting or moving it.
+    /// Legacy/unbound Apple purchases are intentionally accepted for evidence
+    /// review, while the normal sync path still requires an account token.
+    static func verifyForEvidence(_ signed: String, on request: Request) async throws -> JWSTransactionDecodedPayload {
+        try await decode(signed, using: verifier(), requireAppAccountToken: false)
     }
 
     func sync(req: Request) async throws -> User.Public {
         let userID = try req.auth.require(User.self).requireID()
         let body = try req.content.decode(PurchaseRequest.self)
-        let transaction = try await decode(body.signedTransaction, using: verifier())
+        let transaction = try await Self.decode(body.signedTransaction, using: Self.verifier())
         guard transaction.appAccountToken == userID else {
             throw Abort(.forbidden, reason: "This purchase belongs to a different Hushful account.")
         }
@@ -61,12 +74,12 @@ struct ProPurchaseController: RouteCollection {
     func notification(req: Request) async throws -> HTTPStatus {
         let body = try req.content.decode(NotificationRequest.self)
         guard body.signedPayload.utf8.count <= 64_000 else { throw Abort(.payloadTooLarge) }
-        let verifier = try verifier()
+        let verifier = try Self.verifier()
         guard case .valid(let notification) = await verifier.verifyAndDecodeNotification(signedPayload: body.signedPayload) else {
             throw Abort(.badRequest, reason: "Invalid Apple notification.")
         }
         guard let signed = notification.data?.signedTransactionInfo else { return .ok }
-        let transaction = try await decode(signed, using: verifier)
+        let transaction = try await Self.decode(signed, using: verifier)
         guard let userID = transaction.appAccountToken,
               try await User.find(userID, on: req.db) != nil else { return .ok }
         _ = try await apply(transaction, userID: userID, on: req.db)

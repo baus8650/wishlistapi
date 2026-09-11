@@ -10,6 +10,11 @@ final class UserFeedback: Model, Content {
     @Field(key: "message") var message: String
     @Field(key: "platform") var platform: String
     @Field(key: "share_name") var shareName: Bool
+    // Purchase feedback never stores the submitted store token/JWS. These
+    // fields contain only server-derived evidence so an administrator can
+    // distinguish a verified recovery request from an unverified claim.
+    @OptionalField(key: "purchase_evidence") var purchaseEvidence: String?
+    @OptionalField(key: "purchase_evidence_details") var purchaseEvidenceDetails: String?
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
 
     init() {}
@@ -20,7 +25,9 @@ final class UserFeedback: Model, Content {
         category: String,
         message: String,
         platform: String,
-        shareName: Bool
+        shareName: Bool,
+        purchaseEvidence: String? = nil,
+        purchaseEvidenceDetails: String? = nil
     ) {
         self.id = id
         self.$user.id = userID
@@ -28,6 +35,8 @@ final class UserFeedback: Model, Content {
         self.message = message
         self.platform = platform
         self.shareName = shareName
+        self.purchaseEvidence = purchaseEvidence
+        self.purchaseEvidenceDetails = purchaseEvidenceDetails
     }
 }
 
