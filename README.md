@@ -52,6 +52,9 @@ Docker Compose supplies local defaults. Set secure values in production:
 | `JWT_SECRET` | `dev-only-change-me` |
 | `GOOGLE_WEB_CLIENT_ID` | unset; required for Google sign-in |
 | `GOOGLE_IOS_CLIENT_ID` | unset; optional additional Google audience |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | unset; required to verify Android Play purchases |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_BASE64` | unset; base64 alternative to the Play service-account JSON |
+| `GOOGLE_PLAY_RTDN_TOKEN` | unset; high-entropy URL secret for Play purchase notifications |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | unset; service-account JSON used to send Android FCM pushes |
 | `FIREBASE_SERVICE_ACCOUNT_BASE64` | unset; base64 alternative to `FIREBASE_SERVICE_ACCOUNT_JSON` |
 | `DATABASE_URL` | unset; overrides the individual database variables when set |
@@ -83,6 +86,9 @@ Never deploy with the default JWT secret or database password.
    `FIREBASE_SERVICE_ACCOUNT_BASE64`. Do not use the Google OAuth web client
    project (`hushful`) for this credential. Enable the Firebase Cloud Messaging
    API if Google Cloud requests it.
+7. For Android Pro, set `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` (or its base64
+   alternative) and configure the Play Pub/Sub endpoint described in
+   `PRO_ROLLOUT.md`.
 
 The container reads Railway's assigned `PORT`. With `AUTO_MIGRATE=true`, any
 pending Fluent migrations run before the API begins accepting traffic.
@@ -95,11 +101,13 @@ The current automated suite is still starter-level. Before production, add integ
 
 ## Production readiness
 
-The core MVP flow is implemented, but a public launch still needs:
+The core MVP flow is implemented. A public launch still needs these operational
+steps:
 
 - A hosted PostgreSQL database and HTTPS API deployment
-- Production API URL configuration in the iOS target
-- Expanded privacy and authorization integration tests
-- Account recovery, privacy policy, support information, and App Store assets
-- Share-link management in the owner UI
-- Rate limiting and abuse monitoring on authentication and public share endpoints
+- Production API URL configuration in the iOS and Android release builds
+- Expanded privacy and authorization integration tests against a production-like database
+- App Store Connect and Play Console metadata, privacy declarations, age rating, and testing tracks
+- Android Play App Signing certificate deployment for App Links and Google Sign-In
+- Google Play service-account access and Real-time Developer Notifications
+- Production monitoring, backups, and incident response for authentication, sharing, and purchase endpoints

@@ -117,7 +117,7 @@ struct TokenResponse: Content {
 
 struct AuthController: RouteCollection {
     private static let accessTokenTTLSeconds: Int = 60 * 60 * 24 * 30 // 30 days
-    private static let currentTermsVersion = "2026-09-09"
+    private static let currentTermsVersion = "2026-09-10"
 
     func boot(routes: any RoutesBuilder) throws {
         let auth = routes.grouped("auth")

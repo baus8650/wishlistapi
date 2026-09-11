@@ -6,6 +6,12 @@ enum GooglePlayPurchaseService {
     static let packageName = "com.hushful.app"
     static let productID = "hushful_pro_lifetime"
 
+    private static let pathSegmentAllowed: CharacterSet = {
+        var characters = CharacterSet.urlPathAllowed
+        characters.remove(charactersIn: "/")
+        return characters
+    }()
+
     private struct ServiceAccount: Decodable {
         let clientEmail: String
         let privateKey: String
@@ -62,8 +68,8 @@ enum GooglePlayPurchaseService {
 
     static func verify(productID: String, purchaseToken: String, on request: Request) async throws -> ProductPurchase {
         let accessToken = try await accessToken(on: request)
-        let encodedProduct = productID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? productID
-        let encodedToken = purchaseToken.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? purchaseToken
+        let encodedProduct = productID.addingPercentEncoding(withAllowedCharacters: Self.pathSegmentAllowed) ?? productID
+        let encodedToken = purchaseToken.addingPercentEncoding(withAllowedCharacters: Self.pathSegmentAllowed) ?? purchaseToken
         let uri = URI(string: "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/\(packageName)/purchases/products/\(encodedProduct)/tokens/\(encodedToken)")
         var headers = HTTPHeaders()
         headers.bearerAuthorization = .init(token: accessToken)
@@ -77,8 +83,8 @@ enum GooglePlayPurchaseService {
 
     static func acknowledge(productID: String, purchaseToken: String, on request: Request) async throws {
         let accessToken = try await accessToken(on: request)
-        let encodedProduct = productID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? productID
-        let encodedToken = purchaseToken.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? purchaseToken
+        let encodedProduct = productID.addingPercentEncoding(withAllowedCharacters: Self.pathSegmentAllowed) ?? productID
+        let encodedToken = purchaseToken.addingPercentEncoding(withAllowedCharacters: Self.pathSegmentAllowed) ?? purchaseToken
         let uri = URI(string: "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/\(packageName)/purchases/products/\(encodedProduct)/tokens/\(encodedToken):acknowledge")
         var headers = HTTPHeaders()
         headers.bearerAuthorization = .init(token: accessToken)

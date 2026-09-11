@@ -1,3 +1,4 @@
+import Foundation
 import Fluent
 import SQLKit
 import Vapor
@@ -10,6 +11,25 @@ struct GooglePlayProPurchaseController: RouteCollection {
         let purchaseToken: String
     }
 
+    private struct PubSubRequest: Content {
+        let message: PubSubMessage
+    }
+
+    private struct PubSubMessage: Content {
+        let data: String
+    }
+
+    private struct DeveloperNotification: Decodable {
+        let packageName: String
+        let oneTimeProductNotification: OneTimeProductNotification?
+    }
+
+    private struct OneTimeProductNotification: Decodable {
+        let notificationType: Int
+        let purchaseToken: String
+        let sku: String
+    }
+
     struct SyncResponse: Content {
         let user: User.Public
         let state: String
@@ -18,6 +38,59 @@ struct GooglePlayProPurchaseController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         routes.grouped(UserTokenAuthenticator()).grouped(User.guardMiddleware())
             .post("me", "pro", "google", use: sync)
+        routes.on(.POST, "pro", "google", "notifications", body: .collect(maxSize: "128kb"), use: notification)
+    }
+
+    /// Handles Google Play Real-time Developer Notifications delivered through
+    /// a Pub/Sub push subscription. Configure the push endpoint with the
+    /// `GOOGLE_PLAY_RTDN_TOKEN` query parameter; refusing requests without it
+    /// is intentional because Pub/Sub delivery itself is not a purchase proof.
+    func notification(req: Request) async throws -> HTTPStatus {
+        guard let expectedToken = Environment.get("GOOGLE_PLAY_RTDN_TOKEN"),
+              !expectedToken.isEmpty,
+              req.query[String.self, at: "token"] == expectedToken else {
+            throw Abort(.unauthorized)
+        }
+
+        let envelope = try req.content.decode(PubSubRequest.self)
+        guard let payload = Self.decodeBase64(envelope.message.data) else {
+            throw Abort(.badRequest, reason: "Google Play notification data could not be decoded.")
+        }
+        let notification = try JSONDecoder().decode(DeveloperNotification.self, from: payload)
+        guard notification.packageName == GooglePlayPurchaseService.packageName,
+              let oneTime = notification.oneTimeProductNotification,
+              oneTime.notificationType == 1 || oneTime.notificationType == 2,
+              oneTime.sku == GooglePlayPurchaseService.productID,
+              oneTime.purchaseToken.count >= 20,
+              oneTime.purchaseToken.count <= 4_096 else {
+            // A shared Pub/Sub topic can carry unrelated notifications. Ack
+            // those messages after validating the envelope so they do not
+            // retry forever.
+            return .ok
+        }
+
+        let purchase = try await GooglePlayPurchaseService.verify(
+            productID: oneTime.sku,
+            purchaseToken: oneTime.purchaseToken,
+            on: req
+        )
+        guard purchase.productID == GooglePlayPurchaseService.productID else { return .ok }
+        let active = purchase.purchaseState == 0
+        try await reconcile(
+            purchase: purchase,
+            purchaseToken: oneTime.purchaseToken,
+            active: active,
+            on: req.db
+        )
+        return .ok
+    }
+
+    private static func decodeBase64(_ value: String) -> Data? {
+        var normalized = value.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = normalized.count % 4
+        if remainder != 0 { normalized += String(repeating: "=", count: 4 - remainder) }
+        return Data(base64Encoded: normalized)
     }
 
     func sync(req: Request) async throws -> SyncResponse {
@@ -105,6 +178,30 @@ struct GooglePlayProPurchaseController: RouteCollection {
 
             try await ProEntitlementService.refresh(user, on: db)
             return user.toPublic()
+        }
+    }
+
+    private func reconcile(
+        purchase: GooglePlayPurchaseService.ProductPurchase,
+        purchaseToken: String,
+        active: Bool,
+        on database: any Database
+    ) async throws {
+        try await database.transaction { db in
+            guard let existing = try await GooglePlayProPurchase.query(on: db)
+                .filter(\.$purchaseToken == purchaseToken)
+                .first(),
+                  let user = try await User.find(existing.$user.id, on: db) else {
+                return
+            }
+            let userID = existing.$user.id
+            guard let sql = db as? any SQLDatabase else { throw Abort(.internalServerError) }
+            try await sql.raw("SELECT id FROM users WHERE id = \(bind: userID) FOR UPDATE").run()
+            existing.active = active
+            existing.orderID = purchase.orderID ?? existing.orderID
+            existing.acknowledged = purchase.acknowledgementState == 1
+            try await existing.save(on: db)
+            try await ProEntitlementService.refresh(user, on: db)
         }
     }
 }

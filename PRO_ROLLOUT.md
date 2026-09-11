@@ -16,6 +16,16 @@ Before releasing the API and updated iOS build:
 6. Exercise a sandbox purchase, restore, purchase on a different Hushful account (must fail), web status refresh, refund, and replay of an older grant after refund. Use isolated test accounts. Verify three-list enforcement with concurrent creation requests and a Pro account with more than three lists.
 7. Release the iOS code that syncs verified transactions on purchase, restore, launch/account configuration, and transaction updates. Existing buyers need to open the updated app or Restore Purchases once to sync. Failed sync leaves local StoreKit access available and shows retry instructions; it does not finish the new transaction until the server acknowledges it.
 
-Web payments and Android are advertised as coming soon. The iOS download CTA is intentionally text while the app awaits approval. Replace it with the actual App Store URL at launch. Future web checkout should update the account entitlement through a separately verified payment-provider flow; preserve existing lifetime purchases and keep purchase provenance separate if multiple billing providers are introduced.
+## Google Play configuration
+
+Before distributing the Android build:
+
+1. Create an active one-time product named `hushful_pro_lifetime` for package `com.hushful.app` and grant the server service account access to the Google Play Android Publisher API.
+2. Configure `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` or `GOOGLE_PLAY_SERVICE_ACCOUNT_BASE64` on the API deployment. Never include the service-account key in the Android project.
+3. Apply the `CreateGooglePlayProPurchases` migration and test purchase, pending purchase, restore, duplicate delivery, and a purchase attempted from a different Hushful account.
+4. Configure Google Play Real-time Developer Notifications in the Play Console, create a Pub/Sub push subscription to `https://<API host>/v1/pro/google/notifications?token=<GOOGLE_PLAY_RTDN_TOKEN>`, and set the same high-entropy token on the API. The endpoint re-verifies each token before activating or revoking the stored entitlement.
+5. Upload the Android App Bundle to an internal or closed test track and install it from Google Play. A sideloaded debug build cannot complete a production Play purchase. Verify that Google Sign-In uses the Play app-signing certificate, not the upload certificate.
+
+The web reads the server's `isPro` entitlement and does not accept client-supplied purchase state. Preserve purchase provenance and the account-level, non-transferable behavior when adding any future web checkout.
 
 Then cross your fingers!
