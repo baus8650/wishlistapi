@@ -45,7 +45,7 @@ enum GooglePlayPurchaseService {
         let purchaseTimeMillis: String?
         let purchaseState: Int?
         let orderID: String?
-        let productID: String?
+        var productID: String?
         let acknowledgementState: Int?
         let obfuscatedExternalAccountID: String?
         let purchaseToken: String?
@@ -78,7 +78,16 @@ enum GooglePlayPurchaseService {
             request.logger.warning("Google Play purchase verification returned HTTP \(response.status.code).")
             throw Abort(.badRequest, reason: "Google Play could not verify this purchase.")
         }
-        return try response.content.decode(ProductPurchase.self)
+        // The purchases.products response is scoped to the product ID in the
+        // request and Google does not consistently include productId in the
+        // response body. Preserve the verified request value so the
+        // controller does not mistake a valid purchase for a different
+        // product during restore or RTDN reconciliation.
+        var purchase = try response.content.decode(ProductPurchase.self)
+        if purchase.productID == nil {
+            purchase.productID = productID
+        }
+        return purchase
     }
 
     static func acknowledge(productID: String, purchaseToken: String, on request: Request) async throws {
