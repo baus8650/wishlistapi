@@ -203,6 +203,8 @@ struct FeedbackController: RouteCollection {
         userID: UUID,
         on req: Request
     ) async -> PurchaseEvidence {
+        var historicalApple: AppleProPurchase?
+        var historicalGoogle: GooglePlayProPurchase?
         do {
             let applePurchases = try await AppleProPurchase.query(on: req.db)
                 .filter(\.$user.$id == userID)
@@ -229,7 +231,14 @@ struct FeedbackController: RouteCollection {
                     purchasedAt: google.purchasedAt
                 )
             }
-            if let apple = applePurchases.first {
+            historicalApple = applePurchases.first
+            historicalGoogle = googlePurchases.first
+        } catch {
+            req.logger.warning("Could not inspect existing Pro purchases for feedback: \(error)")
+        }
+
+        guard let proof else {
+            if let apple = historicalApple {
                 return .init(
                     status: "verified_current_account_inactive",
                     details: "A verified Apple purchase exists for this Hushful account, but it is not currently active.",
@@ -237,7 +246,7 @@ struct FeedbackController: RouteCollection {
                     purchasedAt: apple.signedAt
                 )
             }
-            if let google = googlePurchases.first {
+            if let google = historicalGoogle {
                 return .init(
                     status: "verified_current_account_inactive",
                     details: "A verified Google Play purchase exists for this Hushful account, but it is not currently active.",
@@ -246,11 +255,6 @@ struct FeedbackController: RouteCollection {
                     purchasedAt: google.purchasedAt
                 )
             }
-        } catch {
-            req.logger.warning("Could not inspect existing Pro purchases for feedback: \(error)")
-        }
-
-        guard let proof else {
             return .init(status: "unverified_claim", details: "No store verification proof was attached. Do not grant Pro from this claim alone.")
         }
 
