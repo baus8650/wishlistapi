@@ -146,6 +146,11 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddFeedbackThreadFields())
     app.migrations.add(CreateUserFeedbackReplies())
 
+    // The first run happens shortly after startup, then once per day. This is
+    // intentionally a service rather than a migration so newly abandoned
+    // registrations are cleaned up continuously.
+    UnverifiedAccountCleanupService.schedule(on: app)
+
     // MARK: Routes
     try routes(app)
 }

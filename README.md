@@ -60,12 +60,19 @@ Docker Compose supplies local defaults. Set secure values in production:
 | `DATABASE_URL` | unset; overrides the individual database variables when set |
 | `PORT` | `8080`; hosting platforms can assign this dynamically |
 | `AUTO_MIGRATE` | `false`; set to `true` for the Railway beta deployment |
+| `TRUST_PROXY_CLIENT_IP` | `false`; set to `true` only when a trusted reverse proxy removes incoming `X-Forwarded-For` and adds the real client IP |
 
 Railway-style `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`
 variables are also supported as alternatives to the corresponding
 `DATABASE_*` variables.
 
 Never deploy with the default JWT secret or database password.
+
+The API rate-limits new-account creation by client IP. If the API is behind a
+reverse proxy (as it normally is in production), configure that proxy to strip
+any client-supplied `X-Forwarded-For` header and write its own value, then set
+`TRUST_PROXY_CLIENT_IP=true`. Do not enable this for a publicly reachable API
+that passes client-controlled forwarding headers through unchanged.
 
 ## Railway beta deployment
 

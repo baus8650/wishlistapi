@@ -146,7 +146,10 @@ struct AuthController: RouteCollection {
         }
 
         let clientKey = AuthRateLimitService.clientKey(req)
-        try await AuthRateLimitService.enforce(req, scope: "register-ip:\(clientKey)", limit: 10, window: 60 * 60)
+        // This broad request limit protects the lookup below. A stricter,
+        // account-creation-only budget is applied only once we know this is a
+        // genuinely new user, so normal verification retries are unaffected.
+        try await AuthRateLimitService.enforce(req, scope: "register-ip:\(clientKey)", limit: 30, window: 15 * 60)
         try await AuthRateLimitService.enforce(req, scope: "register-email:\(email)", limit: 5, window: 60 * 60)
 
         guard email.contains("@"), body.password.count >= 8 else {
@@ -182,6 +185,8 @@ struct AuthController: RouteCollection {
             }
             return EmailVerificationPendingResponse(email: email, verificationRequired: true)
         }
+
+        try await AuthRateLimitService.enforceNewAccountCreation(req)
 
         let hash = try Bcrypt.hash(body.password)
         let user = User(
@@ -382,6 +387,15 @@ struct AuthController: RouteCollection {
         guard !body.idToken.isEmpty else {
             throw Abort(.badRequest, reason: "Missing Google identity token.")
         }
+        // Limits repeated token-verification calls without affecting normal
+        // returning-user sign-ins. New-account creation receives the stricter
+        // budget below once this identity has been verified.
+        try await AuthRateLimitService.enforce(
+            req,
+            scope: "google-ip:\(AuthRateLimitService.clientKey(req))",
+            limit: 30,
+            window: 15 * 60
+        )
 
         let tokenInfoResponse = try await req.client.get(
             URI(string: "https://oauth2.googleapis.com/tokeninfo?id_token=\(body.idToken.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")
@@ -424,6 +438,10 @@ struct AuthController: RouteCollection {
                 guard body.ageConfirmed == true else {
                     throw Abort(.badRequest, reason: "You must confirm that you are at least 13 years old to create a Hushful account.")
                 }
+                // Existing Google users are never subject to the new-account
+                // budget. This protects only the point at which a verified
+                // Google identity becomes a new Hushful account.
+                try await AuthRateLimitService.enforceNewAccountCreation(req)
                 var generator = SystemRandomNumberGenerator()
                 let randomPassword = (0..<32).map { _ in
                     String(format: "%02x", UInt8.random(in: .min ... .max, using: &generator))

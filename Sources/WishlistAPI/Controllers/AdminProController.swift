@@ -51,6 +51,9 @@ struct AdminProController: RouteCollection {
             guard let user = try await User.find(body.userID, on: db) else {
                 throw Abort(.notFound, reason: "That Hushful account could not be found.")
             }
+            guard user.emailVerifiedAt != nil else {
+                throw Abort(.forbidden, reason: "Pro access cannot be granted until this account verifies its email address.")
+            }
 
             if let existing = try await AdminProGrant.query(on: db)
                 .filter(\.$user.$id == body.userID)
