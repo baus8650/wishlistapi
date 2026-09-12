@@ -163,6 +163,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: RecurringOccasionController())
     protected.get("metrics", "summary", use: metrics.summary)
     protected.get("metrics", "accounts", use: metrics.accounts)
+    protected.get("metrics", "accounts", ":accountID", "activity", use: metrics.accountActivity)
     try protected.register(collection: FeedbackController())
     try protected.register(collection: AdminTOTPController())
     try protected.register(collection: AdminProController())

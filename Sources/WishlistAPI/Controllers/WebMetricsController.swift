@@ -17,6 +17,29 @@ struct WebMetricsController {
         let suspicious: Bool
         let createdAt: Date?
     }
+    struct AccountActivity: Content {
+        let userID: UUID
+        let email: String
+        let emailVerified: Bool
+        let createdWishlists: [CreatedWishlist]
+        let sentFriendRequests: [FriendRequest]
+        let receivedFriendRequests: [FriendRequest]
+    }
+    struct CreatedWishlist: Content {
+        let id: UUID
+        let title: String
+        let archived: Bool
+        let createdAt: Date?
+    }
+    struct FriendRequest: Content {
+        let id: UUID
+        let otherUserEmail: String
+        let otherUserDisplayName: String?
+        let otherUsername: String?
+        let status: String
+        let createdAt: Date?
+        let updatedAt: Date?
+    }
 
     func track(req: Request) async throws -> HTTPStatus {
         let body = try req.content.decode(TrackRequest.self)
@@ -73,6 +96,69 @@ struct WebMetricsController {
                 && localPart.dropFirst(normalizedName.count).contains(where: { $0.isNumber })
             return .init(id: try $0.requireID(), displayName: $0.displayName, email: $0.email, username: $0.username, emailVerified: $0.emailVerifiedAt != nil, onboardingVersion: $0.onboardingVersion, isPro: $0.hasLifetimePro, suspicious: looksGenerated, createdAt: $0.createdAt)
         }
+    }
+
+    /// Admin-only current activity for an account under review. This exposes
+    /// relationships and list metadata, not any wishlist item content.
+    func accountActivity(req: Request) async throws -> AccountActivity {
+        let admin = try AdminAccessService.require(req)
+        guard let accountID = req.parameters.get("accountID", as: UUID.self),
+              let account = try await User.find(accountID, on: req.db)
+        else {
+            throw Abort(.notFound, reason: "That Hushful account could not be found.")
+        }
+        await AdminAuditService.record(
+            req,
+            adminID: try admin.requireID(),
+            action: "view_account_activity",
+            targetType: "user",
+            targetID: accountID
+        )
+
+        let wishlists = try await Wishlist.query(on: req.db)
+            .filter(\.$owner.$id == accountID)
+            .sort(\.$createdAt, .descending)
+            .limit(100)
+            .all()
+        let sent = try await Friendship.query(on: req.db)
+            .filter(\.$requester.$id == accountID)
+            .with(\.$recipient)
+            .sort(\.$createdAt, .descending)
+            .limit(100)
+            .all()
+        let received = try await Friendship.query(on: req.db)
+            .filter(\.$recipient.$id == accountID)
+            .with(\.$requester)
+            .sort(\.$createdAt, .descending)
+            .limit(100)
+            .all()
+
+        return try .init(
+            userID: accountID,
+            email: account.email,
+            emailVerified: account.emailVerifiedAt != nil,
+            createdWishlists: wishlists.map {
+                try .init(id: $0.requireID(), title: $0.title, archived: $0.isArchived, createdAt: $0.createdAt)
+            },
+            sentFriendRequests: try sent.map { relationship in
+                try friendRequest(relationship, otherUser: relationship.recipient)
+            },
+            receivedFriendRequests: try received.map { relationship in
+                try friendRequest(relationship, otherUser: relationship.requester)
+            }
+        )
+    }
+
+    private func friendRequest(_ relationship: Friendship, otherUser: User) throws -> FriendRequest {
+        .init(
+            id: try relationship.requireID(),
+            otherUserEmail: otherUser.email,
+            otherUserDisplayName: otherUser.displayName,
+            otherUsername: otherUser.username,
+            status: relationship.status,
+            createdAt: relationship.createdAt,
+            updatedAt: relationship.updatedAt
+        )
     }
 
 }
