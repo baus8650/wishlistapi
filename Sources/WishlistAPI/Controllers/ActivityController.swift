@@ -17,6 +17,11 @@ struct ActivityUnreadCount: Content {
 }
 
 enum ActivityService {
+    static func actorName(for user: User, fallback: String = "Someone") -> String {
+        let name = user.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? fallback : name
+    }
+
     static func create(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
         guard userID != actorID else { return }
         try await ActivityNotification(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message).save(on: db)

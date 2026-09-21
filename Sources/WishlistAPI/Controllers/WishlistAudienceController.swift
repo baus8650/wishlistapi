@@ -88,7 +88,7 @@ enum AudienceService {
             let viewer = WishlistViewer(wishlistId: wishlistID, userId: userID)
             try await viewer.save(on: db)
             try await SocialWishlistAccess(wishlistID: wishlistID, userID: userID, viewerID: viewer.requireID()).save(on: db)
-            try await ActivityService.create(userID: userID, actorID: ownerID, wishlistID: wishlistID, kind: "wishlist_shared", title: "Wishlist shared with you", message: "\(ownerName) shared “\(wishlist.title)” with you.", on: db, client: client, logger: logger)
+            try await ActivityService.create(userID: userID, actorID: ownerID, wishlistID: wishlistID, kind: "wishlist_shared", title: "Wishlist shared with you", message: "\(ownerName) shared “\(wishlist.title)” with you. Tap to check it out.", on: db, client: client, logger: logger)
         }
     }
 }

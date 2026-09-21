@@ -32,7 +32,8 @@ struct WishlistCollaboratorController: RouteCollection {
     }
 
     func update(req: Request) async throws -> Response {
-        let userID = try req.auth.require(User.self).requireID()
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
         guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
               let wishlist = try await Wishlist.query(on: req.db)
                 .filter(\.$id == wishlistID).filter(\.$owner.$id == userID).first() else {
@@ -68,7 +69,7 @@ struct WishlistCollaboratorController: RouteCollection {
             try await ActivityService.create(
                 userID: newID, actorID: userID, wishlistID: wishlistID,
                 kind: "wishlist_collaboration", title: "You’re now a wishlist owner",
-                message: "You can now collaborate on “\(wishlist.title)”.", on: req.db,
+                message: "\(ActivityService.actorName(for: user)) added you as an owner of “\(wishlist.title)”. Tap to check it out.", on: req.db,
                 client: req.client, logger: req.logger
             )
         }

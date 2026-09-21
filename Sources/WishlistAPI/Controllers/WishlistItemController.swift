@@ -110,7 +110,8 @@ struct WishlistItemController: RouteCollection {
             try await syncMemberships(item: item, userID: userId, requestedIDs: Set(linked + [wishlistID]), on: req.db)
         }
         await notifyOwnerNoteMentions(body.ownerNote, previousText: previousOwnerNote, wishlist: wishlist, actor: user, req: req)
-        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item changed in “\(wishlist.title)”.", on: req.db, client: req.client, logger: req.logger)
+        let actorName = ActivityService.actorName(for: user)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) updated an item in “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
         return item
     }
 
@@ -174,7 +175,8 @@ struct WishlistItemController: RouteCollection {
         try await item.save(on: req.db)
         try await syncMemberships(item: item, userID: userId, requestedIDs: Set((body.linkedWishlistIDs ?? []) + [wishlistID]), on: req.db)
         await notifyOwnerNoteMentions(body.ownerNote, wishlist: wishlist, actor: user, req: req)
-        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "New wishlist item", message: "A new item was added to “\(wishlist.title)”.", on: req.db, client: req.client, logger: req.logger)
+        let actorName = ActivityService.actorName(for: user)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "New wishlist item", message: "\(actorName) added a new item to “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
         return item
     }
 
@@ -268,7 +270,8 @@ struct WishlistItemController: RouteCollection {
             try await syncMemberships(item: item, userID: userId, requestedIDs: Set(linked + [wishlistID]), on: req.db)
         }
         await notifyOwnerNoteMentions(body.ownerNote, previousText: previousOwnerNote, wishlist: wishlist, actor: user, req: req)
-        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item changed in “\(wishlist.title)”.", on: req.db, client: req.client, logger: req.logger)
+        let actorName = ActivityService.actorName(for: user)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) updated an item in “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
         return item
     }
 
@@ -305,7 +308,8 @@ struct WishlistItemController: RouteCollection {
         } else {
             try await item.delete(on: req.db)
         }
-        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "An item was removed from “\(wishlist.title)”.", on: req.db, client: req.client, logger: req.logger)
+        let actorName = ActivityService.actorName(for: user)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) removed an item from “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
         return .noContent
     }
 
