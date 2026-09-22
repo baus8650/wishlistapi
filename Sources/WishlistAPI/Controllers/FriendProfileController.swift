@@ -10,6 +10,7 @@ struct ProfileWishlistDTO: Content {
 struct FriendProfileDTO: Content {
     let user: SocialUserDTO
     let publicWishlists: [ProfileWishlistDTO]
+    let jointWishlists: [ProfileWishlistDTO]
     let sharedWishlists: [ProfileWishlistDTO]
     let birthdayMonth: Int?
     let birthdayDay: Int?
@@ -41,13 +42,12 @@ struct FriendProfileController: RouteCollection {
         let isFriend = try await areFriends(me, otherID, on: req.db)
         guard isFriend || other.isDiscoverable else { throw Abort(.notFound) }
 
-        let publicWishlists = try await Wishlist.query(on: req.db)
+        let publicWishlistRecords = try await Wishlist.query(on: req.db)
             .filter(\.$owner.$id == otherID)
             .filter(\.$visibility == "public")
             .sort(\.$createdAt, .descending)
             .all()
             .filter { !$0.matureContentEnabled || currentUser.canShowAgeRestrictedLists }
-            .map { ProfileWishlistDTO(wishlistID: try $0.requireID(), title: $0.title, accountShareID: nil) }
 
         let sharedAccess: [SocialWishlistAccess]
         if isFriend {
@@ -56,8 +56,49 @@ struct FriendProfileController: RouteCollection {
         } else {
             sharedAccess = []
         }
+        // A joint list is one where the profile owner and the viewer are both
+        // owners/collaborators. Gift-planning lists also have social access
+        // rows, so classify them here before building the shared-list section.
+        let myOwnedIDs = Set(try await Wishlist.query(on: req.db)
+            .filter(\.$owner.$id == me).all().compactMap(\.id))
+        let otherOwnedIDs = Set(try await Wishlist.query(on: req.db)
+            .filter(\.$owner.$id == otherID).all().compactMap(\.id))
+        let myCollaboratorIDs = Set(try await WishlistCollaborator.query(on: req.db)
+            .filter(\.$user.$id == me).all().map(\.$wishlist.id))
+        let otherCollaboratorIDs = Set(try await WishlistCollaborator.query(on: req.db)
+            .filter(\.$user.$id == otherID).all().map(\.$wishlist.id))
+        let jointIDs = isFriend
+            ? otherCollaboratorIDs.intersection(myCollaboratorIDs.union(myOwnedIDs))
+                .union(myCollaboratorIDs.intersection(otherOwnedIDs))
+            : Set<UUID>()
+
+        let publicWishlists = try publicWishlistRecords
+            .filter { wishlist in
+                guard let wishlistID = wishlist.id else { return true }
+                return !jointIDs.contains(wishlistID)
+            }
+            .map { ProfileWishlistDTO(wishlistID: try $0.requireID(), title: $0.title, accountShareID: nil) }
+
+        let jointWishlists: [ProfileWishlistDTO]
+        if jointIDs.isEmpty {
+            jointWishlists = []
+        } else {
+            jointWishlists = try await Wishlist.query(on: req.db)
+                .filter(\.$id ~~ Array(jointIDs))
+                .sort(\.$title, .ascending)
+                .all()
+                .filter { !$0.matureContentEnabled || currentUser.canShowAgeRestrictedLists }
+                .map { wishlist in
+                    let wishlistID = try wishlist.requireID()
+                    return ProfileWishlistDTO(
+                        wishlistID: wishlistID,
+                        title: wishlist.title,
+                        accountShareID: sharedAccess.first(where: { $0.$wishlist.id == wishlistID })?.$viewer.id
+                    )
+                }
+        }
         let sharedWishlists = try sharedAccess
-            .filter { $0.wishlist.$owner.id == otherID }
+            .filter { $0.wishlist.$owner.id == otherID && !jointIDs.contains($0.$wishlist.id) }
             .filter { !$0.wishlist.matureContentEnabled || currentUser.canShowAgeRestrictedLists }
             .map { ProfileWishlistDTO(wishlistID: try $0.wishlist.requireID(), title: $0.wishlist.title, accountShareID: $0.$viewer.id) }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
@@ -82,6 +123,7 @@ struct FriendProfileController: RouteCollection {
         return FriendProfileDTO(
             user: SocialUserDTO(id: otherID, username: username, displayName: other.displayName, hasAvatar: other.avatarData != nil),
             publicWishlists: publicWishlists,
+            jointWishlists: jointWishlists,
             sharedWishlists: sharedWishlists,
             birthdayMonth: visibleBirthday ? other.birthdayMonth : nil,
             birthdayDay: visibleBirthday ? other.birthdayDay : nil,
