@@ -45,10 +45,26 @@ struct ProfileAttributeDTO: Content {
     let label: String
     let value: String
     let visibility: String
+    let selectedUserIDs: [UUID]
 }
 
 extension UserProfileAttribute {
-    func dto() -> ProfileAttributeDTO {
-        .init(id: id, label: label, value: value, visibility: visibility)
+    func dto(selectedUserIDs: [UUID] = []) -> ProfileAttributeDTO {
+        .init(id: id, label: label, value: value, visibility: visibility, selectedUserIDs: selectedUserIDs)
+    }
+}
+
+final class UserProfileAttributeAudience: Model, @unchecked Sendable {
+    static let schema = "user_profile_attribute_audiences"
+
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "attribute_id") var attribute: UserProfileAttribute
+    @Parent(key: "user_id") var user: User
+
+    init() {}
+
+    init(attributeID: UUID, userID: UUID) {
+        self.$attribute.id = attributeID
+        self.$user.id = userID
     }
 }

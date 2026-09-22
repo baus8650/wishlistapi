@@ -88,6 +88,13 @@ enum ProfileAccessService {
         switch attribute.visibility {
         case "public": return true
         case "friends": return try await areFriends(viewerID, targetID, on: db)
+        case "selected":
+            guard try await areFriends(viewerID, targetID, on: db),
+                  let attributeID = attribute.id else { return false }
+            return try await UserProfileAttributeAudience.query(on: db)
+                .filter(\.$attribute.$id == attributeID)
+                .filter(\.$user.$id == viewerID)
+                .first() != nil
         default: return false
         }
     }

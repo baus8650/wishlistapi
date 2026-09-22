@@ -129,6 +129,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddBirthdayToUser())
     app.migrations.add(AddBirthdaySetupState())
     app.migrations.add(CreateProfileDetails())
+    app.migrations.add(CreateProfileAttributeAudiences())
     app.migrations.add(AddAgeSafetyFields())
     app.migrations.add(AddBirthdayYearToUser())
     app.migrations.add(NormalizeBirthdaySetupState())

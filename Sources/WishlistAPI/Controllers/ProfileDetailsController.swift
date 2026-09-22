@@ -25,6 +25,7 @@ struct UpsertProfileAttributeRequest: Content {
     let label: String
     let value: String
     let visibility: String
+    let selectedUserIDs: [UUID]?
 }
 
 struct BirthdayAlertDTO: Content {
@@ -67,7 +68,7 @@ struct ProfileDetailsController: RouteCollection {
         let body = try req.content.decode(UpdateProfileDetailsRequest.self)
 
         if let visibility = body.birthdayVisibility {
-            guard Self.validVisibility(visibility) else { throw Abort(.badRequest, reason: "Invalid birthday visibility.") }
+            guard Self.validBirthdayVisibility(visibility) else { throw Abort(.badRequest, reason: "Invalid birthday visibility.") }
             user.birthdayVisibility = visibility
         }
 
@@ -130,6 +131,12 @@ struct ProfileDetailsController: RouteCollection {
         let userID = try req.auth.require(User.self).requireID()
         let body = try req.content.decode(UpsertProfileAttributeRequest.self)
         let clean = try Self.validatedAttribute(body)
+        let selectedUserIDs = try await Self.validatedSelectedUserIDs(
+            body.selectedUserIDs ?? [],
+            visibility: clean.visibility,
+            ownerID: userID,
+            on: req.db
+        )
         guard try await UserProfileAttribute.query(on: req.db).filter(\.$user.$id == userID).count() < 50 else {
             throw Abort(.badRequest, reason: "You can add up to 50 profile attributes.")
         }
@@ -141,7 +148,8 @@ struct ProfileDetailsController: RouteCollection {
         }
         let attribute = UserProfileAttribute(userID: userID, label: clean.label, value: clean.value, visibility: clean.visibility)
         try await attribute.save(on: req.db)
-        return attribute.dto()
+        try await Self.replaceAudience(selectedUserIDs, for: attribute, on: req.db)
+        return attribute.dto(selectedUserIDs: selectedUserIDs)
     }
 
     func updateAttribute(req: Request) async throws -> ProfileAttributeDTO {
@@ -153,6 +161,12 @@ struct ProfileDetailsController: RouteCollection {
                 .first() else { throw Abort(.notFound) }
         let body = try req.content.decode(UpsertProfileAttributeRequest.self)
         let clean = try Self.validatedAttribute(body)
+        let selectedUserIDs = try await Self.validatedSelectedUserIDs(
+            body.selectedUserIDs ?? [],
+            visibility: clean.visibility,
+            ownerID: userID,
+            on: req.db
+        )
         guard try await UserProfileAttribute.query(on: req.db)
             .filter(\.$user.$id == userID)
             .filter(\.$labelSearch == clean.label.lowercased())
@@ -165,7 +179,8 @@ struct ProfileDetailsController: RouteCollection {
         attribute.value = clean.value
         attribute.visibility = clean.visibility
         try await attribute.save(on: req.db)
-        return attribute.dto()
+        try await Self.replaceAudience(selectedUserIDs, for: attribute, on: req.db)
+        return attribute.dto(selectedUserIDs: selectedUserIDs)
     }
 
     func deleteAttribute(req: Request) async throws -> HTTPStatus {
@@ -258,6 +273,13 @@ struct ProfileDetailsController: RouteCollection {
             .filter(\.$user.$id == userID)
             .sort(\.$labelSearch, .ascending)
             .all()
+        let attributeIDs = attributes.compactMap(\.id)
+        let audienceRows = attributeIDs.isEmpty
+            ? []
+            : try await UserProfileAttributeAudience.query(on: db)
+                .filter(\.$attribute.$id ~~ attributeIDs)
+                .all()
+        let audienceByAttribute = Dictionary(grouping: audienceRows, by: { $0.$attribute.id })
         return .init(
             matureProfileEnabled: user.isAgeRestrictedProfile,
             birthdayMonth: user.birthdayMonth,
@@ -265,7 +287,10 @@ struct ProfileDetailsController: RouteCollection {
             birthdayYear: user.birthdayYear,
             birthdayVisibility: user.birthdayVisibility,
             birthdaySetupCompleted: user.birthdaySetupCompleted,
-            attributes: attributes.map { $0.dto() }
+            attributes: attributes.compactMap { attribute in
+                guard let attributeID = attribute.id else { return nil }
+                return attribute.dto(selectedUserIDs: audienceByAttribute[attributeID]?.map(\.$user.id) ?? [])
+            }
         )
     }
 
@@ -284,7 +309,43 @@ struct ProfileDetailsController: RouteCollection {
         return (label, value, body.visibility)
     }
 
-    private static func validVisibility(_ visibility: String) -> Bool { ["public", "friends", "private"].contains(visibility) }
+    private static func validatedSelectedUserIDs(
+        _ requestedIDs: [UUID],
+        visibility: String,
+        ownerID: UUID,
+        on db: any Database
+    ) async throws -> [UUID] {
+        guard visibility == "selected" else { return [] }
+        let selectedIDs = Set(requestedIDs).subtracting([ownerID])
+        guard selectedIDs.count <= 50 else {
+            throw Abort(.badRequest, reason: "You can select up to 50 people for an attribute.")
+        }
+        for selectedID in selectedIDs {
+            guard try await ProfileAccessService.areFriends(ownerID, selectedID, on: db),
+                  try await !ProfileAccessService.isBlocked(ownerID, selectedID, on: db),
+                  try await User.find(selectedID, on: db) != nil else {
+                throw Abort(.forbidden, reason: "Selected people must be accepted friends.")
+            }
+        }
+        return Array(selectedIDs)
+    }
+
+    private static func replaceAudience(
+        _ selectedUserIDs: [UUID],
+        for attribute: UserProfileAttribute,
+        on db: any Database
+    ) async throws {
+        let attributeID = try attribute.requireID()
+        try await UserProfileAttributeAudience.query(on: db)
+            .filter(\.$attribute.$id == attributeID)
+            .delete()
+        for userID in selectedUserIDs {
+            try await UserProfileAttributeAudience(attributeID: attributeID, userID: userID).save(on: db)
+        }
+    }
+
+    private static func validBirthdayVisibility(_ visibility: String) -> Bool { ["public", "friends", "private"].contains(visibility) }
+    private static func validVisibility(_ visibility: String) -> Bool { ["public", "friends", "selected", "private"].contains(visibility) }
     private static func validDate(year: Int, month: Int, day: Int) -> Bool {
         let calendar = Calendar(identifier: .gregorian)
         let now = Date()
