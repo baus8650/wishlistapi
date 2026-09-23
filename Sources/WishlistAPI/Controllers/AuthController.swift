@@ -7,7 +7,9 @@
 
 import Vapor
 import Fluent
+import JWT
 import JWTKit
+import SQLKit
 
 struct RegisterRequest: Content {
     let email: String
@@ -46,6 +48,40 @@ struct GoogleLoginRequest: Content {
     let acceptedTermsVersion: String?
     let ageConfirmed: Bool?
     let totpCode: String?
+}
+
+struct AppleSignInNonceResponse: Content {
+    let nonce: String
+}
+
+struct AppleLoginRequest: Content {
+    let identityToken: String
+    /// The original server-issued value passed to `ASAuthorizationAppleIDRequest.nonce`.
+    let nonce: String
+    /// Apple only supplies this on an initial authorization. It is user-entered
+    /// profile data, not a signed identity-token claim.
+    let fullName: String?
+    let acceptedTermsVersion: String?
+    let ageConfirmed: Bool?
+    let totpCode: String?
+}
+
+enum AppleSignInValidation {
+    static func isValidNonce(_ nonce: String) -> Bool {
+        nonce.count >= 32 && nonce.count <= 128
+    }
+
+    static func matchesTokenNonce(_ nonce: String, tokenNonce: String?) -> Bool {
+        isValidNonce(nonce) && tokenNonce == nonce
+    }
+
+    static func verifiedEmail(from profile: AppleIdentityToken) -> String? {
+        guard profile.emailVerified?.value == true,
+              let email = profile.email?.trimmingCharacters(in: .whitespacesAndNewlines),
+              email.contains("@")
+        else { return nil }
+        return email.lowercased()
+    }
 }
 
 private struct GoogleTokenInfo: Decodable {
@@ -118,6 +154,7 @@ struct TokenResponse: Content {
 struct AuthController: RouteCollection {
     private static let accessTokenTTLSeconds: Int = 60 * 60 * 24 * 30 // 30 days
     private static let currentTermsVersion = "2026-09-10"
+    private static let appleNonceTTL: TimeInterval = 10 * 60
 
     func boot(routes: any RoutesBuilder) throws {
         let auth = routes.grouped("auth")
@@ -128,6 +165,8 @@ struct AuthController: RouteCollection {
         auth.post("forgot-password", use: forgotPassword)
         auth.post("reset-password", use: resetPassword)
         auth.post("google", use: googleLogin)
+        auth.post("apple", "nonce", use: appleNonce)
+        auth.post("apple", use: appleLogin)
     }
 
     func register(req: Request) async throws -> EmailVerificationPendingResponse {
@@ -493,6 +532,186 @@ struct AuthController: RouteCollection {
 
         let usedAdminMFA = try await verifyAdminMFAIfNeeded(user: user, code: body.totpCode, req: req)
         return try await tokenResponse(for: user, req: req, adminMFA: usedAdminMFA)
+    }
+
+    /// Issues the short-lived challenge that is placed in the native Apple
+    /// authorization request. Persisting only a digest avoids turning this
+    /// table into a source of replayable credentials.
+    func appleNonce(req: Request) async throws -> AppleSignInNonceResponse {
+        try await AuthRateLimitService.enforce(
+            req,
+            scope: "apple-nonce-ip:\(AuthRateLimitService.clientKey(req))",
+            limit: 12,
+            window: 15 * 60
+        )
+
+        let now = Date()
+        // The records are useful until their short expiry to reject replays.
+        // Clean up expired rows opportunistically without a separate job.
+        try await AppleSignInNonce.query(on: req.db)
+            .filter(\.$expiresAt < now)
+            .delete()
+
+        let nonce = try Tokens.randomURLSafeToken()
+        try await AppleSignInNonce(
+            nonceHash: Tokens.sha256Hex(nonce),
+            expiresAt: now.addingTimeInterval(Self.appleNonceTTL)
+        ).save(on: req.db)
+
+        return AppleSignInNonceResponse(nonce: nonce)
+    }
+
+    func appleLogin(req: Request) async throws -> TokenResponse {
+        let body = try req.content.decode(AppleLoginRequest.self)
+        guard !body.identityToken.isEmpty, body.identityToken.count <= 12_000,
+              AppleSignInValidation.isValidNonce(body.nonce)
+        else {
+            throw Abort(.badRequest, reason: "Invalid Apple sign-in response.")
+        }
+        try await AuthRateLimitService.enforce(
+            req,
+            scope: "apple-ip:\(AuthRateLimitService.clientKey(req))",
+            limit: 30,
+            window: 15 * 60
+        )
+
+        let profile: AppleIdentityToken
+        do {
+            // Vapor's Apple helper verifies Apple's ES256 signature against its
+            // JWKS and validates issuer, this app's configured audience, and
+            // expiry before exposing the claims below.
+            profile = try await req.jwt.apple.verify(body.identityToken)
+        } catch {
+            req.logger.notice("Apple identity-token verification failed: \(error)")
+            throw Abort(.unauthorized, reason: "Apple sign-in could not be verified.")
+        }
+
+        // A signed token is only usable for the server-issued, one-time
+        // request that initiated it. This is deliberately checked before the
+        // nonce is consumed so a transient malformed provider response does
+        // not strand the user with no retry.
+        guard AppleSignInValidation.matchesTokenNonce(body.nonce, tokenNonce: profile.nonce) else {
+            throw Abort(.unauthorized, reason: "Apple sign-in could not be verified.")
+        }
+        try await consumeAppleNonce(body.nonce, req: req)
+
+        let subject = profile.subject.value
+        guard !subject.isEmpty, subject.count <= 512 else {
+            throw Abort(.unauthorized, reason: "Apple sign-in could not be verified.")
+        }
+
+        var user: User
+        if let identity = try await AuthIdentity.query(on: req.db)
+            .filter(\.$provider == "apple")
+            .filter(\.$providerSubject == subject)
+            .with(\.$user)
+            .first() {
+            // The opaque, team-scoped Apple subject is the durable account
+            // identifier. Later Apple responses may omit profile information.
+            user = identity.user
+        } else {
+            guard let email = AppleSignInValidation.verifiedEmail(from: profile)
+            else {
+                // Managed Apple Accounts can omit email. We cannot safely
+                // create a Hushful account without one, but an already-linked
+                // subject above remains able to sign in without it.
+                throw Abort(.unprocessableEntity, reason: "Apple did not share a verified email address. Use another sign-in method or an Apple Account with an email address.")
+            }
+            if let existingUser = try await User.query(on: req.db)
+                .filter(\.$email == email)
+                .first() {
+                // Only a token whose signature, issuer, audience, expiry,
+                // nonce, and verified-email claim have all passed may link to
+                // a legacy email/password account. The provider subject is
+                // then stored, so future sign-ins do not depend on email.
+                user = existingUser
+            } else {
+                guard body.acceptedTermsVersion == Self.currentTermsVersion else {
+                    throw Abort(.badRequest, reason: "Accept the Terms of Use and Privacy Policy to create an account.")
+                }
+                guard body.ageConfirmed == true else {
+                    throw Abort(.badRequest, reason: "You must confirm that you are at least 13 years old to create a Hushful account.")
+                }
+
+                let displayName = try validatedAppleDisplayName(body.fullName)
+                try await AuthRateLimitService.enforceNewAccountCreation(req)
+                user = User(
+                    email: email,
+                    passwordHash: try Bcrypt.hash(Tokens.randomURLSafeToken()),
+                    displayName: displayName
+                )
+                user.emailVerifiedAt = Date()
+                user.termsAcceptedAt = Date()
+                user.termsVersion = Self.currentTermsVersion
+                user.ageConfirmedAt = Date()
+                try await user.save(on: req.db)
+            }
+
+            let identity = AuthIdentity(
+                userID: try user.requireID(),
+                provider: "apple",
+                providerSubject: subject
+            )
+            do {
+                try await identity.save(on: req.db)
+            } catch {
+                // A duplicate request can race while attaching the same Apple
+                // subject. Resolve to the already-linked account instead of
+                // creating a second identity or granting another session.
+                guard let linked = try await AuthIdentity.query(on: req.db)
+                    .filter(\.$provider == "apple")
+                    .filter(\.$providerSubject == subject)
+                    .with(\.$user)
+                    .first()
+                else { throw error }
+                user = linked.user
+            }
+        }
+
+        if user.emailVerifiedAt == nil {
+            // Apple has asserted this address as verified. This can safely
+            // complete verification for a linked legacy password account.
+            user.emailVerifiedAt = Date()
+            try await user.save(on: req.db)
+        }
+
+        let usedAdminMFA = try await verifyAdminMFAIfNeeded(user: user, code: body.totpCode, req: req)
+        return try await tokenResponse(for: user, req: req, adminMFA: usedAdminMFA)
+    }
+
+    private func consumeAppleNonce(_ nonce: String, req: Request) async throws {
+        let nonceHash = Tokens.sha256Hex(nonce)
+        try await req.db.transaction { database in
+            // PostgreSQL row locking serializes two concurrent uses of the
+            // same nonce. The second request re-reads `used_at` after the
+            // first transaction commits and is rejected below.
+            guard let sql = database as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "Apple sign-in requires PostgreSQL.")
+            }
+            try await sql.raw("SELECT id FROM apple_sign_in_nonces WHERE nonce_hash = \(bind: nonceHash) FOR UPDATE").run()
+
+            guard let storedNonce = try await AppleSignInNonce.query(on: database)
+                .filter(\.$nonceHash == nonceHash)
+                .first(),
+                  storedNonce.usedAt == nil,
+                  storedNonce.expiresAt > Date()
+            else {
+                throw Abort(.unauthorized, reason: "This Apple sign-in request has expired. Please try again.")
+            }
+
+            storedNonce.usedAt = Date()
+            try await storedNonce.save(on: database)
+        }
+    }
+
+    private func validatedAppleDisplayName(_ rawName: String?) throws -> String? {
+        let name = rawName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard name.count <= 80 else {
+            throw Abort(.badRequest, reason: "Your name must be 80 characters or fewer.")
+        }
+        guard !name.isEmpty else { return nil }
+        try ContentSafetyService.validate(name, field: "display name")
+        return name
     }
 
     private func verifyAdminMFAIfNeeded(user: User, code: String?, req: Request) async throws -> Bool {

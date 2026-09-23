@@ -8,12 +8,14 @@ final class AppleProPurchase: Model, @unchecked Sendable {
     @Field(key: "original_transaction_id") var originalTransactionID: String
     @Field(key: "signed_at") var signedAt: Date
     @Field(key: "active") var active: Bool
+    @Field(key: "store_environment") var storeEnvironment: String
 
     init() {}
-    init(userID: UUID, originalTransactionID: String, signedAt: Date, active: Bool) {
+    init(userID: UUID, originalTransactionID: String, signedAt: Date, active: Bool, storeEnvironment: String) {
         self.$user.id = userID
         self.originalTransactionID = originalTransactionID
         self.signedAt = signedAt
         self.active = active
+        self.storeEnvironment = storeEnvironment
     }
 }

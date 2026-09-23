@@ -50,6 +50,7 @@ Docker Compose supplies local defaults. Set secure values in production:
 | `DATABASE_USERNAME` | `wishlist` |
 | `DATABASE_PASSWORD` | `wishlist` |
 | `JWT_SECRET` | `dev-only-change-me` |
+| `APPLE_SIGN_IN_CLIENT_ID` | `com.bausch.hushful`; expected `aud` claim for native Sign in with Apple tokens |
 | `GOOGLE_WEB_CLIENT_ID` | unset; required for Google sign-in |
 | `GOOGLE_IOS_CLIENT_ID` | unset; optional additional Google audience |
 | `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | unset; required to verify Android Play purchases |
@@ -67,6 +68,11 @@ variables are also supported as alternatives to the corresponding
 `DATABASE_*` variables.
 
 Never deploy with the default JWT secret or database password.
+
+Native Sign in with Apple verifies Apple's ES256-signed identity token against
+Apple's published JWKS, checks its issuer, audience, expiry, and a short-lived
+server-issued nonce. It does not need an Apple private key unless the API is
+later extended to exchange authorization codes for refresh tokens.
 
 The API rate-limits new-account creation by client IP. If the API is behind a
 reverse proxy (as it normally is in production), configure that proxy to strip

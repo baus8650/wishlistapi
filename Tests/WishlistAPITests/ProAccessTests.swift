@@ -6,6 +6,25 @@ import Vapor
 
 @Suite("Pro access")
 struct ProAccessTests {
+    @Test("Apple purchase verification accepts only production and sandbox")
+    func supportedApplePurchaseEnvironments() {
+        #expect(ProPurchaseController.supportedEnvironments == [.production, .sandbox])
+        #expect(!ProPurchaseController.supportedEnvironments.contains(.xcode))
+        #expect(!ProPurchaseController.supportedEnvironments.contains(.localTesting))
+    }
+
+    @Test("Apple purchase records retain their signed environment")
+    func purchaseRecordEnvironment() {
+        let record = AppleProPurchase(
+            userID: UUID(),
+            originalTransactionID: "123",
+            signedAt: Date(),
+            active: true,
+            storeEnvironment: AppStoreEnvironment.sandbox.rawValue
+        )
+        #expect(record.storeEnvironment == "Sandbox")
+    }
+
     @Test("Free accounts cannot use Pro features; entitled accounts can")
     func proGate() throws {
         let user = User(email: "test@example.com", passwordHash: "unused")

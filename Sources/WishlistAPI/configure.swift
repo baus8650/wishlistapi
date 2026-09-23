@@ -79,6 +79,15 @@ public func configure(_ app: Application) async throws {
     let key = HMACKey(from: secret)
     await app.jwt.keys.add(hmac: key, digestAlgorithm: .sha256)
 
+    // Native Sign in with Apple identity tokens are signed by Apple and must
+    // name this App ID in their audience claim. The JWT package fetches and
+    // caches Apple's published signing keys when each token is verified.
+    let configuredAppleClientID = Environment.get("APPLE_SIGN_IN_CLIENT_ID")?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    app.jwt.apple.applicationIdentifier = configuredAppleClientID?.isEmpty == false
+        ? configuredAppleClientID
+        : "com.bausch.hushful"
+
     app.migrations.add(CreateUser())
     app.migrations.add(AddDisplayNameToUser())
     app.migrations.add(AddUserDisplayNameSearch())
@@ -91,6 +100,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddItemQuantities())
     app.migrations.add(CreatePasswordResetToken())
     app.migrations.add(CreateAuthIdentity())
+    app.migrations.add(CreateAppleSignInNonce())
     app.migrations.add(CreateSocialFeatures())
     app.migrations.add(AddUserAvatar())
     app.migrations.add(CreateActivityNotifications())
@@ -121,6 +131,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddPurchaseEvidenceToUserFeedback())
     app.migrations.add(AddPurchaseMetadataToUserFeedback())
     app.migrations.add(CreateAppleProPurchases())
+    app.migrations.add(AddAppleProPurchaseEnvironment())
     app.migrations.add(CreateGooglePlayProPurchases())
     app.migrations.add(AddEmailVerification())
     app.migrations.add(CreateAuthRateLimitEvents())
