@@ -51,6 +51,7 @@ Docker Compose supplies local defaults. Set secure values in production:
 | `DATABASE_PASSWORD` | `wishlist` |
 | `JWT_SECRET` | `dev-only-change-me` |
 | `APPLE_SIGN_IN_CLIENT_ID` | `com.bausch.hushful`; expected `aud` claim for native Sign in with Apple tokens |
+| `APPLE_WEB_SIGN_IN_CLIENT_ID` | `com.bausch.hushful.web`; expected `aud` claim for web Sign in with Apple tokens |
 | `GOOGLE_WEB_CLIENT_ID` | unset; required for Google sign-in |
 | `GOOGLE_IOS_CLIENT_ID` | unset; optional additional Google audience |
 | `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | unset; required to verify Android Play purchases |

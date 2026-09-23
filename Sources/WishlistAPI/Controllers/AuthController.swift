@@ -167,6 +167,7 @@ struct AuthController: RouteCollection {
         auth.post("google", use: googleLogin)
         auth.post("apple", "nonce", use: appleNonce)
         auth.post("apple", use: appleLogin)
+        auth.post("apple", "web", use: appleWebLogin)
     }
 
     func register(req: Request) async throws -> EmailVerificationPendingResponse {
@@ -562,6 +563,22 @@ struct AuthController: RouteCollection {
     }
 
     func appleLogin(req: Request) async throws -> TokenResponse {
+        try await appleLogin(req: req, applicationIdentifier: nil)
+    }
+
+    /// Validates a browser-issued Apple identity token against the web Service
+    /// ID. Keeping this separate from the native route means a token minted
+    /// for one client cannot be replayed as credentials for the other.
+    func appleWebLogin(req: Request) async throws -> TokenResponse {
+        guard let serviceID = Environment.get("APPLE_WEB_SIGN_IN_CLIENT_ID")?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !serviceID.isEmpty
+        else {
+            throw Abort(.serviceUnavailable, reason: "Sign in with Apple is not configured for the web yet.")
+        }
+        return try await appleLogin(req: req, applicationIdentifier: serviceID)
+    }
+
+    private func appleLogin(req: Request, applicationIdentifier: String?) async throws -> TokenResponse {
         let body = try req.content.decode(AppleLoginRequest.self)
         guard !body.identityToken.isEmpty, body.identityToken.count <= 12_000,
               AppleSignInValidation.isValidNonce(body.nonce)
@@ -580,7 +597,7 @@ struct AuthController: RouteCollection {
             // Vapor's Apple helper verifies Apple's ES256 signature against its
             // JWKS and validates issuer, this app's configured audience, and
             // expiry before exposing the claims below.
-            profile = try await req.jwt.apple.verify(body.identityToken)
+            profile = try await req.jwt.apple.verify(body.identityToken, applicationIdentifier: applicationIdentifier)
         } catch {
             req.logger.notice("Apple identity-token verification failed: \(error)")
             throw Abort(.unauthorized, reason: "Apple sign-in could not be verified.")
