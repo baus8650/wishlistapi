@@ -33,6 +33,7 @@ struct SocialController: RouteCollection {
         routes.post("friend-requests", "from", ":userID", "accept", use: acceptFromUser)
         routes.delete("friend-requests", "from", ":userID", use: declineFromUser)
         routes.delete("friendships", ":friendshipID", use: removeFriendship)
+        routes.get("blocks", use: blockedUsers)
         routes.put("blocks", ":userID", use: block)
         routes.delete("blocks", ":userID", use: unblock)
         routes.get("friend-groups", use: groups)
@@ -211,6 +212,20 @@ struct SocialController: RouteCollection {
         guard let other = req.parameters.get("userID", as: UUID.self) else { throw Abort(.badRequest) }
         if let row = try await UserBlock.query(on: req.db).filter(\.$blocker.$id == me).filter(\.$blocked.$id == other).first() { try await row.delete(on: req.db) }
         return .noContent
+    }
+
+    /// Returns only accounts the signed-in user has blocked. Incoming blocks
+    /// deliberately remain private and cannot be changed by this endpoint.
+    func blockedUsers(req: Request) async throws -> [SocialUserDTO] {
+        let me = try req.auth.require(User.self).requireID()
+        let users = try await UserBlock.query(on: req.db)
+            .filter(\.$blocker.$id == me)
+            .with(\.$blocked)
+            .all()
+            .map { try socialUser($0.blocked) }
+        return users.sorted {
+            ($0.displayName ?? $0.username).localizedCaseInsensitiveCompare($1.displayName ?? $1.username) == .orderedAscending
+        }
     }
 
     func groups(req: Request) async throws -> [FriendGroupDTO] {

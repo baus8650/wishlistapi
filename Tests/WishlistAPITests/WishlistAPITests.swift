@@ -46,4 +46,80 @@ struct WishlistAPITests {
         #expect(response.email == "test@example.com")
         #expect(response.onboardingVersion == nil)
     }
+
+    @Test("Dismissing a report leaves the reported account and content untouched")
+    func dismissReportOnlyResolvesTheReport() async throws {
+        try await withApp { app in
+            let admin = User(
+                email: "moderator@example.com",
+                passwordHash: try Bcrypt.hash("correct-horse-battery-staple")
+            )
+            admin.role = "admin"
+            admin.emailVerifiedAt = Date()
+            try await admin.save(on: app.db)
+            let adminID = try admin.requireID()
+
+            let reportedUser = User(
+                email: "reported@example.com",
+                passwordHash: try Bcrypt.hash("correct-horse-battery-staple")
+            )
+            try await reportedUser.save(on: app.db)
+            let reportedUserID = try reportedUser.requireID()
+
+            let wishlist = Wishlist(
+                ownerUserId: reportedUserID,
+                title: "Keep this list"
+            )
+            try await wishlist.save(on: app.db)
+            let wishlistID = try wishlist.requireID()
+
+            let report = UserReport(
+                reporterID: adminID,
+                reportedID: reportedUserID,
+                reason: "other",
+                details: "This report should be dismissed.",
+                targetType: "wishlist",
+                targetID: wishlistID
+            )
+            try await report.save(on: app.db)
+            let reportID = try report.requireID()
+
+            let loginResponse = try await app.testing().sendRequest(
+                .POST,
+                "v1/auth/login",
+                beforeRequest: { request in
+                    try request.content.encode(
+                        LoginRequest(
+                            email: admin.email,
+                            password: "correct-horse-battery-staple",
+                            totpCode: nil
+                        ),
+                        as: .json
+                    )
+                }
+            )
+            #expect(loginResponse.status == .ok)
+            let token = try loginResponse.content.decode(TokenResponse.self).accessToken
+
+            let dismissalResponse = try await app.testing().sendRequest(
+                .POST,
+                "v1/admin/reports/\(reportID)/dismiss",
+                headers: ["Authorization": "Bearer \(token)"]
+            )
+            #expect(dismissalResponse.status == .noContent)
+
+            guard let dismissedReport = try await UserReport.find(reportID, on: app.db) else {
+                Issue.record("Dismissed report was not found.")
+                return
+            }
+            #expect(dismissedReport.status == "dismissed")
+            #expect(dismissedReport.resolvedAt != nil)
+            #expect(dismissedReport.$moderator.id == adminID)
+
+            let refreshedReportedUser = try await User.find(reportedUserID, on: app.db)
+            #expect(refreshedReportedUser?.suspendedAt == nil)
+            let survivingWishlist = try await Wishlist.find(wishlistID, on: app.db)
+            #expect(survivingWishlist != nil)
+        }
+    }
 }
