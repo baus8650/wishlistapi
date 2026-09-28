@@ -155,6 +155,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddAgeEligibilityConfirmation())
     app.migrations.add(BackfillShareLinkExpiry())
     app.migrations.add(CreateAdminProGrants())
+    app.migrations.add(RepairAdminProGrantUniqueness())
     app.migrations.add(AddFeedbackThreadFields())
     app.migrations.add(CreateUserFeedbackReplies())
 

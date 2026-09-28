@@ -122,4 +122,98 @@ struct WishlistAPITests {
             #expect(survivingWishlist != nil)
         }
     }
+
+    @Test("Manual Pro grants can be revoked and granted again")
+    func manualProGrantHistory() async throws {
+        try await withApp { app in
+            let admin = User(
+                email: "pro-admin@example.com",
+                passwordHash: try Bcrypt.hash("correct-horse-battery-staple")
+            )
+            admin.role = "admin"
+            admin.emailVerifiedAt = Date()
+            try await admin.save(on: app.db)
+
+            let user = User(
+                email: "pro-review-account@example.com",
+                passwordHash: try Bcrypt.hash("correct-horse-battery-staple")
+            )
+            user.emailVerifiedAt = Date()
+            try await user.save(on: app.db)
+            let userID = try user.requireID()
+
+            let loginResponse = try await app.testing().sendRequest(
+                .POST,
+                "v1/auth/login",
+                beforeRequest: { request in
+                    try request.content.encode(
+                        LoginRequest(
+                            email: admin.email,
+                            password: "correct-horse-battery-staple",
+                            totpCode: nil
+                        ),
+                        as: .json
+                    )
+                }
+            )
+            #expect(loginResponse.status == .ok)
+            let token = try loginResponse.content.decode(TokenResponse.self).accessToken
+            let headers = ["Authorization": "Bearer \(token)"]
+
+            let firstGrantResponse = try await app.testing().sendRequest(
+                .POST,
+                "v1/admin/pro/grants",
+                headers: headers,
+                beforeRequest: { request in
+                    try request.content.encode(
+                        AdminProController.GrantRequest(
+                            userID: userID,
+                            reason: "App Review Pro test grant"
+                        ),
+                        as: .json
+                    )
+                }
+            )
+            #expect(firstGrantResponse.status == .ok)
+            let firstGrant = try firstGrantResponse.content.decode(AdminProController.GrantResponse.self)
+
+            let revokeResponse = try await app.testing().sendRequest(
+                .POST,
+                "v1/admin/pro/grants/\(firstGrant.id)/revoke",
+                headers: headers
+            )
+            #expect(revokeResponse.status == .ok)
+            let revokedGrant = try revokeResponse.content.decode(AdminProController.GrantResponse.self)
+            #expect(!revokedGrant.active)
+            let revokedUser = try await User.find(userID, on: app.db)
+            #expect(revokedUser?.hasLifetimePro == false)
+
+            let secondGrantResponse = try await app.testing().sendRequest(
+                .POST,
+                "v1/admin/pro/grants",
+                headers: headers,
+                beforeRequest: { request in
+                    try request.content.encode(
+                        AdminProController.GrantRequest(
+                            userID: userID,
+                            reason: "App Review Pro test grant again"
+                        ),
+                        as: .json
+                    )
+                }
+            )
+            #expect(secondGrantResponse.status == .ok)
+            let secondGrant = try secondGrantResponse.content.decode(AdminProController.GrantResponse.self)
+            #expect(secondGrant.active)
+            #expect(secondGrant.id != firstGrant.id)
+            let regrantedUser = try await User.find(userID, on: app.db)
+            #expect(regrantedUser?.hasLifetimePro == true)
+
+            let grants = try await AdminProGrant.query(on: app.db)
+                .filter(\.$user.$id == userID)
+                .all()
+            #expect(grants.count == 2)
+            #expect(grants.filter { $0.active }.count == 1)
+        }
+    }
 }
