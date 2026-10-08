@@ -27,6 +27,22 @@ final class WishlistItem: Model, Content {
     @OptionalField(key: "price")
     var price: Double?
 
+    @OptionalField(key: "sale_price")
+    var salePrice: Double?
+
+    @OptionalField(key: "sale_discount_percent")
+    var saleDiscountPercent: Double?
+
+    @OptionalField(key: "sale_ends_at")
+    var saleEndsAt: Date?
+
+    var activeSalePrice: Double? {
+        guard let price, saleEndsAt.map({ $0 > Date() }) ?? true else { return nil }
+        if let salePrice { return salePrice }
+        if let saleDiscountPercent { return (price * (1 - saleDiscountPercent / 100) * 100).rounded() / 100 }
+        return nil
+    }
+
     @OptionalField(key: "owner_note")
     var ownerNote: String?
 

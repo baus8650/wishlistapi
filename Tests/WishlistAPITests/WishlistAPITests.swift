@@ -158,7 +158,7 @@ struct WishlistAPITests {
             )
             #expect(loginResponse.status == .ok)
             let token = try loginResponse.content.decode(TokenResponse.self).accessToken
-            let headers = ["Authorization": "Bearer \(token)"]
+            let headers: HTTPHeaders = ["Authorization": "Bearer \(token)"]
 
             let firstGrantResponse = try await app.testing().sendRequest(
                 .POST,

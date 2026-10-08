@@ -14,6 +14,10 @@ struct WishlistItemController: RouteCollection {
         let title: String
         let url: String?
         let price: Double?
+        let salePrice: Double?
+        let saleDiscountPercent: Double?
+        let saleEndsAt: Date?
+        let clearSale: Bool?
         let ownerNote: String?
         let quantity: Int?
         let linkedWishlistIDs: [UUID]?
@@ -25,6 +29,10 @@ struct WishlistItemController: RouteCollection {
         let title: String?
         let url: String?
         let price: Double?
+        let salePrice: Double?
+        let saleDiscountPercent: Double?
+        let saleEndsAt: Date?
+        let clearSale: Bool?
         let ownerNote: String?
         let quantity: Int?
         let linkedWishlistIDs: [UUID]?
@@ -83,13 +91,14 @@ struct WishlistItemController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
 
         let body = try req.content.decode(CreateRequest.self)
+        let previousSale = item.activeSalePrice
         let previousOwnerNote = item.ownerNote
         let title = body.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
             throw Abort(.badRequest, reason: "Title is required.")
         }
         try ContentSafetyService.validate(title, field: "item title")
-        if let price = body.price, price < 0 {
+        if let price = body.price, !price.isFinite || price < 0 {
             throw Abort(.badRequest, reason: "price cannot be negative.")
         }
         guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
@@ -98,6 +107,8 @@ struct WishlistItemController: RouteCollection {
         if let ownerNote = body.ownerNote { try ContentSafetyService.validate(ownerNote, field: "note") }
         try await validateOwnerNoteMentions(body.ownerNote ?? "", wishlist: wishlist, actorID: userId, on: req.db)
 
+        item.itemType = itemType
+        try applySale(item, price: body.price, salePrice: body.salePrice, discount: body.saleDiscountPercent, endsAt: body.saleEndsAt)
         item.title = title
         item.url = body.url?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         item.price = body.price
@@ -111,7 +122,12 @@ struct WishlistItemController: RouteCollection {
         }
         await notifyOwnerNoteMentions(body.ownerNote, previousText: previousOwnerNote, wishlist: wishlist, actor: user, req: req)
         let actorName = ActivityService.actorName(for: user)
-        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) updated an item in “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
+        let saleChanged = item.activeSalePrice != nil && item.activeSalePrice != previousSale
+        if saleChanged {
+            try await notifySale(item: item, actorID: userId, req: req)
+        } else {
+            try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) updated an item in “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
+        }
         return item
     }
 
@@ -153,7 +169,7 @@ struct WishlistItemController: RouteCollection {
         guard !title.isEmpty else { throw Abort(.badRequest, reason: "Title is required.") }
         try ContentSafetyService.validate(title, field: "item title")
 
-        if let price = body.price, price < 0 {
+        if let price = body.price, !price.isFinite || price < 0 {
             throw Abort(.badRequest, reason: "price cannot be negative.")
         }
         guard (body.quantity ?? 1) > 0 else { throw Abort(.badRequest, reason: "quantity must be at least 1.") }
@@ -171,12 +187,17 @@ struct WishlistItemController: RouteCollection {
             itemType: itemType,
             contributionGoal: itemType == "cash_fund" ? body.contributionGoal : nil
         )
+        try applySale(item, price: body.price, salePrice: body.salePrice, discount: body.saleDiscountPercent, endsAt: body.saleEndsAt)
         try await validateOwnerNoteMentions(body.ownerNote ?? "", wishlist: wishlist, actorID: userId, on: req.db)
         try await item.save(on: req.db)
         try await syncMemberships(item: item, userID: userId, requestedIDs: Set((body.linkedWishlistIDs ?? []) + [wishlistID]), on: req.db)
         await notifyOwnerNoteMentions(body.ownerNote, wishlist: wishlist, actor: user, req: req)
         let actorName = ActivityService.actorName(for: user)
-        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "New wishlist item", message: "\(actorName) added a new item to “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
+        if item.activeSalePrice != nil {
+            try await notifySale(item: item, actorID: userId, req: req)
+        } else {
+            try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "New wishlist item", message: "\(actorName) added a new item to “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
+        }
         return item
     }
 
@@ -236,6 +257,7 @@ struct WishlistItemController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
 
         let body = try req.content.decode(UpdateRequest.self)
+        let previousSale = item.activeSalePrice
         let previousOwnerNote = item.ownerNote
         if body.itemType == "cash_fund" || item.itemType == "cash_fund" { try ProAccessService.requirePro(user) }
 
@@ -247,7 +269,7 @@ struct WishlistItemController: RouteCollection {
         }
         if let url = body.url { item.url = url }
         if let price = body.price {
-            guard price >= 0 else { throw Abort(.badRequest, reason: "price cannot be negative.") }
+            guard price.isFinite, price >= 0 else { throw Abort(.badRequest, reason: "price cannot be negative.") }
             item.price = price
         }
         if let note = body.ownerNote { item.ownerNote = note }
@@ -261,6 +283,15 @@ struct WishlistItemController: RouteCollection {
             item.contributionGoal = type == "cash_fund" ? (body.contributionGoal ?? item.contributionGoal) : nil
         }
 
+        if body.clearSale == true || body.salePrice != nil || body.saleDiscountPercent != nil || body.saleEndsAt != nil {
+            try applySale(item, price: item.price,
+                          salePrice: body.clearSale == true ? nil : (body.saleDiscountPercent != nil ? nil : body.salePrice ?? item.salePrice),
+                          discount: body.clearSale == true ? nil : (body.salePrice != nil ? nil : body.saleDiscountPercent ?? item.saleDiscountPercent),
+                          endsAt: body.clearSale == true ? nil : body.saleEndsAt ?? item.saleEndsAt)
+        } else {
+            try applySale(item, price: item.price, salePrice: item.salePrice, discount: item.saleDiscountPercent, endsAt: item.saleEndsAt)
+        }
+
         if let ownerNote = body.ownerNote {
             try await validateOwnerNoteMentions(ownerNote, wishlist: wishlist, actorID: userId, on: req.db)
         }
@@ -271,7 +302,12 @@ struct WishlistItemController: RouteCollection {
         }
         await notifyOwnerNoteMentions(body.ownerNote, previousText: previousOwnerNote, wishlist: wishlist, actor: user, req: req)
         let actorName = ActivityService.actorName(for: user)
-        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) updated an item in “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
+        let saleChanged = item.activeSalePrice != nil && item.activeSalePrice != previousSale
+        if saleChanged {
+            try await notifySale(item: item, actorID: userId, req: req)
+        } else {
+            try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) updated an item in “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
+        }
         return item
     }
 
@@ -311,6 +347,35 @@ struct WishlistItemController: RouteCollection {
         let actorName = ActivityService.actorName(for: user)
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) removed an item from “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
         return .noContent
+    }
+
+    private func notifySale(item: WishlistItem, actorID: UUID, req: Request) async throws {
+        let memberships = try await WishlistItemMembership.query(on: req.db)
+            .filter(\.$item.$id == item.requireID()).with(\.$wishlist).all()
+        for membership in memberships {
+            try await ActivityService.notifyRecipients(wishlistID: membership.$wishlist.id, actorID: actorID,
+                kind: "wishlist_updated", title: "Wishlist item on sale",
+                message: "\(item.title) is on sale in “\(membership.wishlist.title)”. Tap to see the discounted price.",
+                on: req.db, client: req.client, logger: req.logger)
+        }
+    }
+
+    func applySale(_ item: WishlistItem, price: Double?, salePrice: Double?, discount: Double?, endsAt: Date?) throws {
+        if salePrice != nil || discount != nil {
+            guard item.itemType != "cash_fund", let price, price.isFinite, price > 0 else {
+                throw Abort(.badRequest, reason: "A sale requires an original price greater than zero.")
+            }
+            guard !(salePrice != nil && discount != nil) else { throw Abort(.badRequest, reason: "Choose a sale price or discount percentage.") }
+            if let salePrice, !salePrice.isFinite || salePrice < 0 || salePrice >= price {
+                throw Abort(.badRequest, reason: "Sale price must be below the original price and at least zero.")
+            }
+            if let discount, !discount.isFinite || discount <= 0 || discount > 100 {
+                throw Abort(.badRequest, reason: "Discount must be greater than zero and at most 100%.")
+            }
+        }
+        item.salePrice = salePrice
+        item.saleDiscountPercent = discount
+        item.saleEndsAt = salePrice != nil || discount != nil ? endsAt : nil
     }
 
     private func membership(itemID: UUID, wishlistID: UUID, on database: any Database) async throws -> WishlistItemMembership? {
