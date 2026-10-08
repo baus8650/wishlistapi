@@ -40,6 +40,12 @@ struct WishlistItemController: RouteCollection {
         let contributionGoal: Double?
     }
 
+    struct SaleRequest: Content {
+        let salePrice: Double?
+        let saleDiscountPercent: Double?
+        let saleEndsAt: Date?
+    }
+
     struct ReorderRequest: Content { let ids: [UUID] }
     struct LinksResponse: Content { let wishlistIDs: [UUID] }
 
@@ -54,6 +60,7 @@ struct WishlistItemController: RouteCollection {
         // Item-level endpoints under /wishlists
         routes.put(":wishlistID", "items", ":itemID", use: replace)
         routes.patch(":wishlistID", "items", ":itemID", use: update)
+        routes.put(":wishlistID", "items", ":itemID", "sale", use: updateSale)
         routes.delete(":wishlistID", "items", ":itemID", use: delete)
     }
 
@@ -69,6 +76,27 @@ struct WishlistItemController: RouteCollection {
             return try await MentionService.collaborativeCandidates(for: wishlistID, excluding: userID, on: req.db)
         }
         return try await MentionService.candidates(for: wishlistID, excluding: userID, on: req.db)
+    }
+
+    func updateSale(req: Request) async throws -> WishlistItem {
+        let actorID = try req.auth.require(User.self).requireID()
+        guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
+              let itemID = req.parameters.get("itemID", as: UUID.self),
+              try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: actorID, on: req.db),
+              try await membership(itemID: itemID, wishlistID: wishlistID, on: req.db) != nil,
+              let item = try await WishlistItem.find(itemID, on: req.db) else { throw Abort(.notFound) }
+        let body = try req.content.decode(SaleRequest.self)
+        let previousSale = item.activeSalePrice
+        try applySale(item, price: item.price, salePrice: body.salePrice, discount: body.saleDiscountPercent, endsAt: body.saleEndsAt)
+        try await item.save(on: req.db)
+        if item.activeSalePrice != nil && item.activeSalePrice != previousSale {
+            try await notifySale(item: item, actorID: actorID, req: req)
+        } else if previousSale != nil, item.activeSalePrice == nil {
+            try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: actorID,
+                kind: "wishlist_updated", title: "Wishlist item updated", message: "The sale on \(item.title) has been removed.",
+                on: req.db, client: req.client, logger: req.logger)
+        }
+        return item
     }
 
     // PUT /wishlists/:wishlistID/items/:itemID
