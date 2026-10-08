@@ -20,6 +20,9 @@ final class Wishlist: Model, Content {
     @Field(key: "title")
     var title: String
 
+    @Field(key: "purpose")
+    var purpose: String
+
     @Field(key: "visibility")
     var visibility: String
 
@@ -95,6 +98,7 @@ final class Wishlist: Model, Content {
         self.$owner.id = ownerUserId
         self.title = title
         self.visibility = visibility
+        self.purpose = "for_others"
         self.position = 0
         self.collaborationMode = "our_wishlist"
         self.reminderEnabled = false

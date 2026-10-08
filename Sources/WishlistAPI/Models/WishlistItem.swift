@@ -36,6 +36,9 @@ final class WishlistItem: Model, Content {
     @OptionalField(key: "sale_ends_at")
     var saleEndsAt: Date?
 
+    @OptionalField(key: "sale_reminder_sent_for_end")
+    var saleReminderSentForEnd: Date?
+
     var activeSalePrice: Double? {
         guard let price, saleEndsAt.map({ $0 > Date() }) ?? true else { return nil }
         if let salePrice { return salePrice }

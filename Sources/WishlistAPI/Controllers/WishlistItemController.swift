@@ -92,9 +92,8 @@ struct WishlistItemController: RouteCollection {
         if item.activeSalePrice != nil && item.activeSalePrice != previousSale {
             try await notifySale(item: item, actorID: actorID, req: req)
         } else if previousSale != nil, item.activeSalePrice == nil {
-            try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: actorID,
-                kind: "wishlist_updated", title: "Wishlist item updated", message: "The sale on \(item.title) has been removed.",
-                on: req.db, client: req.client, logger: req.logger)
+            try await SaleNotificationService.notify(item: item, actorID: actorID, title: "Sale removed",
+                message: "The sale on \(item.title) has been removed", on: req.db, client: req.client, logger: req.logger)
         }
         return item
     }
@@ -378,14 +377,8 @@ struct WishlistItemController: RouteCollection {
     }
 
     private func notifySale(item: WishlistItem, actorID: UUID, req: Request) async throws {
-        let memberships = try await WishlistItemMembership.query(on: req.db)
-            .filter(\.$item.$id == item.requireID()).with(\.$wishlist).all()
-        for membership in memberships {
-            try await ActivityService.notifyRecipients(wishlistID: membership.$wishlist.id, actorID: actorID,
-                kind: "wishlist_updated", title: "Wishlist item on sale",
-                message: "\(item.title) is on sale in “\(membership.wishlist.title)”. Tap to see the discounted price.",
-                on: req.db, client: req.client, logger: req.logger)
-        }
+        try await SaleNotificationService.notify(item: item, actorID: actorID,
+            title: "Wishlist item on sale", message: "\(item.title) is on sale", on: req.db, client: req.client, logger: req.logger)
     }
 
     func applySale(_ item: WishlistItem, price: Double?, salePrice: Double?, discount: Double?, endsAt: Date?) throws {
@@ -401,6 +394,7 @@ struct WishlistItemController: RouteCollection {
                 throw Abort(.badRequest, reason: "Discount must be greater than zero and at most 100%.")
             }
         }
+        if item.saleEndsAt != endsAt || (salePrice == nil && discount == nil) { item.saleReminderSentForEnd = nil }
         item.salePrice = salePrice
         item.saleDiscountPercent = discount
         item.saleEndsAt = salePrice != nil || discount != nil ? endsAt : nil

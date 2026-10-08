@@ -125,3 +125,11 @@ steps:
 - Android Play App Signing certificate deployment for App Links and Google Sign-In
 - Google Play service-account access and Real-time Developer Notifications
 - Production monitoring, backups, and incident response for authentication, sharing, and purchase endpoints
+
+## Sale alerts and reminders
+
+Lists have a `purpose`: `for_myself` sends sale alerts and expiry reminders to the primary owner, while `for_others` sends them to saved recipients with list notifications enabled. Existing lists default to `for_others`. Purpose can be supplied when creating a list or changed through the list settings endpoint; it does not change visibility or access.
+
+The API checks every 15 minutes for active sales ending within 24 hours. It records the end date that was reminded and locks the item while creating Activity entries, preventing duplicate reminders from overlapping workers or a restart. Changed end dates rearm the reminder. Removed, expired, and archived-list sales are skipped. Push delivery uses the existing APNs/FCM configuration; Activity entries are still recorded when push is unavailable. Sales without an end date receive no expiry reminder.
+
+Deploy the API and run the `AddSaleRemindersAndListPurpose` migration before releasing the updated client (`AUTO_MIGRATE=true` runs registered migrations on startup).

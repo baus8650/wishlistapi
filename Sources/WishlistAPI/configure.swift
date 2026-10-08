@@ -116,6 +116,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateWishlistCollaborators())
     app.migrations.add(AddSharedListNotifications())
     app.migrations.add(AddItemSales())
+    app.migrations.add(AddSaleRemindersAndListPurpose())
     app.migrations.add(CreateWishlistItemImages())
     app.migrations.add(CreateWebMetrics())
     app.migrations.add(AddWishlistProFeatures())
@@ -164,6 +165,7 @@ public func configure(_ app: Application) async throws {
     // intentionally a service rather than a migration so newly abandoned
     // registrations are cleaned up continuously.
     UnverifiedAccountCleanupService.schedule(on: app)
+    SaleReminderService.schedule(on: app)
 
     // MARK: Routes
     try routes(app)

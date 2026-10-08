@@ -12,6 +12,7 @@ import SQLKit
 struct WishlistController: RouteCollection {
 
     struct Summary: Content {
+        let purpose: String
         let id: UUID
         let title: String
         let visibility: String
@@ -30,6 +31,7 @@ struct WishlistController: RouteCollection {
     }
 
     struct CreateRequest: Content {
+        let purpose: String?
         let title: String
         let visibility: String?
         let collaborationMode: String?
@@ -45,6 +47,7 @@ struct WishlistController: RouteCollection {
     }
 
     struct SettingsResponse: Content {
+        let purpose: String
         let visibility: String
         let showPurchaserNames: Bool
         let allowMultiplePurchases: Bool
@@ -62,6 +65,7 @@ struct WishlistController: RouteCollection {
     }
 
     struct UpdateSettingsRequest: Content {
+        let purpose: String?
         let visibility: String?
         let showPurchaserNames: Bool?
         let allowMultiplePurchases: Bool?
@@ -139,6 +143,7 @@ struct WishlistController: RouteCollection {
             }
             let wishlist = Wishlist(ownerUserId: userId, title: title)
             wishlist.visibility = visibility
+            wishlist.purpose = try validatedPurpose(body.purpose ?? "for_others")
             if let mode = body.collaborationMode {
                 guard ["our_wishlist", "gift_planning"].contains(mode) else { throw Abort(.badRequest, reason: "Invalid collaboration mode.") }
                 wishlist.collaborationMode = mode
@@ -257,6 +262,7 @@ struct WishlistController: RouteCollection {
         }
 
         return .init(
+            purpose: wishlist.purpose,
             visibility: wishlist.visibility,
             showPurchaserNames: wishlist.showPurchaserNames,
             allowMultiplePurchases: wishlist.allowMultiplePurchases,
@@ -304,6 +310,7 @@ struct WishlistController: RouteCollection {
         ].contains(true)
         if changesProSettings { try ProAccessService.requirePro(user) }
 
+        if let purpose = body.purpose { wishlist.purpose = try validatedPurpose(purpose) }
         if let v = body.showPurchaserNames { wishlist.showPurchaserNames = v }
         if let v = body.allowMultiplePurchases { wishlist.allowMultiplePurchases = v }
         if let v = body.allowNotes { wishlist.allowNotes = v }
@@ -354,6 +361,7 @@ struct WishlistController: RouteCollection {
         try await ProfileAccessService.revokeIneligibleWishlistAccess(wishlistID: wishlistID, on: req.db)
 
         return .init(
+            purpose: wishlist.purpose,
             visibility: wishlist.visibility,
             showPurchaserNames: wishlist.showPurchaserNames,
             allowMultiplePurchases: wishlist.allowMultiplePurchases,
@@ -384,6 +392,7 @@ struct WishlistController: RouteCollection {
         copy.customColorHex = source.customColorHex
         copy.collaborationMode = source.collaborationMode
         copy.matureContentEnabled = source.matureContentEnabled
+        copy.purpose = source.purpose
         try await copy.save(on: req.db)
 
         let memberships = try await WishlistItemMembership.query(on: req.db)
@@ -418,8 +427,13 @@ struct WishlistController: RouteCollection {
         }
     }
 
+    func validatedPurpose(_ purpose: String) throws -> String {
+        guard ["for_myself", "for_others"].contains(purpose) else { throw Abort(.badRequest, reason: "Choose For myself or For others.") }
+        return purpose
+    }
+
     private func summary(_ wishlist: Wishlist, for userID: UUID, isCollaborative: Bool) throws -> Summary {
-        .init(id: try wishlist.requireID(), title: wishlist.title, visibility: wishlist.visibility,
+        .init(purpose: wishlist.purpose, id: try wishlist.requireID(), title: wishlist.title, visibility: wishlist.visibility,
               collaborationMode: wishlist.collaborationMode, isPrimaryOwner: wishlist.$owner.id == userID,
               isCollaborative: isCollaborative, occasionDate: wishlist.occasionDate,
               reminderEnabled: wishlist.reminderEnabled, icon: wishlist.icon,
