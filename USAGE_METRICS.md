@@ -7,7 +7,7 @@ Matches Nestic's first-party traffic and growth coverage on web and iOS. New col
 - Website page views, iOS app opens, App Store link clicks, opted-in sessions, new accounts, and items created.
 - 7/30/90-day UTC charts, complete daily totals including zero days, country/city, device/browser/OS, referral sites, campaigns, time zones, pages, and the latest 100 events.
 - New accounts and items created are current database records created in the reporting period, not an immutable action history. Deleted records no longer contribute. Traffic is approximate, not unique people or installs.
-- Web: Account → Traffic & growth (administrator access). iOS: Account → Hushful Metrics.
+- Web: standalone `/metrics` dashboard, linked from Account (administrator access). Overview includes complete-week comparisons, daily charts, average views, busiest day, ranked sources, and daily CSV export. Audience, Sources and Recent Activity have separate sections. iOS: Account → Hushful Metrics provides a compact card overview, readable date-based chart, top sources/pages and a link to the full web dashboard. Web sign-in is separate; native credentials are never included in the link.
 
 ## Consent and protection
 
