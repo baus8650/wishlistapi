@@ -46,7 +46,7 @@ struct WebMetricsController {
         let visitor = body.visitorID.trimmingCharacters(in: .whitespacesAndNewlines)
         let path = body.path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard visitor.range(of: #"^[A-Za-z0-9-]{16,64}$"#, options: .regularExpression) != nil,
-              path.hasPrefix("/"), path.count <= 120 else { throw Abort(.badRequest) }
+              usagePaths.contains(path), path.hasPrefix("/") else { throw Abort(.badRequest) }
         try await WebMetricEvent(visitorID: visitor, path: path, signedIn: body.signedIn).save(on: req.db)
         return .noContent
     }

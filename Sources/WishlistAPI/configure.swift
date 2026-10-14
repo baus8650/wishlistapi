@@ -167,6 +167,11 @@ public func configure(_ app: Application) async throws {
     UnverifiedAccountCleanupService.schedule(on: app)
     SaleReminderService.schedule(on: app)
 
+    app.migrations.add(CreateUsageEvents())
+    app.migrations.add(AddUsageLocationDetails())
+    app.lifecycle.use(UsageRetentionLifecycle())
+
     // MARK: Routes
     try routes(app)
+    try usageAnalyticsRoutes(app)
 }
