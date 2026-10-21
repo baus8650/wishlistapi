@@ -5,6 +5,18 @@ import Vapor
 
 @Suite("Usage analytics privacy")
 struct UsageAnalyticsTests {
+    @Test("Geolocation trusts forwarded client IPs only when explicitly enabled")
+    func forwardedAddresses() {
+        let headers: HTTPHeaders = ["X-Real-IP": " 8.8.8.8 ", "X-Forwarded-For": "1.1.1.1, 10.0.0.2"]
+        #expect(usageIPAddress(headers: headers, peer: "10.0.0.1", trustProxy: false) == "10.0.0.1")
+        #expect(usageIPAddress(headers: headers, peer: "10.0.0.1", trustProxy: true) == "8.8.8.8")
+        #expect(usageIPAddress(headers: ["X-Forwarded-For": "8.8.8.8, 10.0.0.2"], peer: "10.0.0.1", trustProxy: true) == "8.8.8.8")
+        #expect(usageIPAddress(headers: ["X-Real-IP": " "], peer: "10.0.0.1", trustProxy: true) == "10.0.0.1")
+        #expect(OfflineLocationLookup.shared.isAvailable)
+        let ip = usageIPAddress(headers: headers, peer: "10.0.0.1", trustProxy: true)
+        #expect(OfflineLocationLookup.shared.location(for: ip)?.city != nil)
+    }
+
     @Test("Details are absent without consent, including after withdrawal")
     func consentAndWithdrawal() {
         let id = UUID(), session = UUID()
@@ -45,8 +57,10 @@ struct UsageAnalyticsTests {
             #expect(throws: Abort.self) { try AdminAccessService.require(req) }
             let user = User(id: UUID(), email: "metrics-reader@example.com", passwordHash: "unused")
             req.auth.login(user)
+            #expect(!usageEventIsExcluded(for: req))
             #expect(throws: Abort.self) { try AdminAccessService.require(req) }
             user.role = "admin"
+            #expect(usageEventIsExcluded(for: req))
             #expect(try AdminAccessService.require(req).id == user.id)
             user.adminTOTPEnabled = true
             #expect(throws: Abort.self) { try AdminAccessService.require(req) }

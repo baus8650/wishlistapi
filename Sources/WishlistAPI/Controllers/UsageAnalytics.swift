@@ -46,7 +46,9 @@ struct UsageVisit: Content {
     let id: UUID; let date: Date; let source: String; let kind: String; let path: String; let consented: Bool
     let country: String?; let region: String?; let city: String?; let device: String?; let browser: String?; let os: String?; let version: String?; let language: String?; let timezone: String?; let referrer: String?; let campaign: String?
 }
+struct UsageLocationDiagnostics: Content { let databaseAvailable: Bool; let trustedProxyEnabled: Bool; let eventsWithCity: Int }
 struct UsageDashboard: Content {
+    let locationDiagnostics: UsageLocationDiagnostics
     let days: Int; let pageViews: Int; let appOpens: Int; let appStoreClicks: Int; let consentedSessions: Int; let detailedEvents: Int; let newAccounts: Int; let recordedUpdates: Int
     let daily: [UsageDay]; let countries: [UsageDimension]; let cities: [UsageDimension]; let devices: [UsageDimension]; let browsers: [UsageDimension]; let operatingSystems: [UsageDimension]; let referrers: [UsageDimension]; let pages: [UsageDimension]; let campaigns: [UsageDimension]; let timezones: [UsageDimension]; let recent: [UsageVisit]
 }
@@ -85,15 +87,30 @@ func makeUsageEvent(_ input: UsageEventRequest, headers: HTTPHeaders, ip: String
         return event
 }
 
+func usageEventIsExcluded(for req: Request) -> Bool {
+    req.auth.get(User.self).map(AdminAccessService.isAdmin) ?? false
+}
+
+func usageIPAddress(headers: HTTPHeaders, peer: String, trustProxy: Bool) -> String {
+    guard trustProxy else { return peer }
+    // Railway supplies X-Real-IP at its public edge; prefer it to a forwarded chain.
+    let real = headers.first(name: "x-real-ip")?.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let real, !real.isEmpty { return real }
+    let forwarded = headers.first(name: "x-forwarded-for")?.split(separator: ",").first.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    return forwarded?.isEmpty == false ? forwarded! : peer
+}
+
 func usageAnalyticsRoutes(_ app: Application) throws {
-    app.post("v1","metrics","usage-events") { req async throws -> HTTPStatus in
+    app.grouped(UserTokenAuthenticator()).post("v1","metrics","usage-events") { req async throws -> HTTPStatus in
+        // Authenticate only to exclude administrators; no account identifier is stored in events.
+        if usageEventIsExcluded(for: req) { return .noContent }
         let input = try req.content.decode(UsageEventRequest.self)
         guard ["web","ios","android"].contains(input.source), ["page_view","app_open","app_store_click"].contains(input.kind), usagePaths.contains(input.path) else { throw Abort(.badRequest) }
         let agent = req.headers.first(name:.userAgent)?.lowercased() ?? ""
         if ["bot","crawler","spider","headless"].contains(where:agent.contains) { return .noContent }
         let peer = req.remoteAddress?.ipAddress ?? "unknown"
         // Only trust forwarding headers when deployment explicitly enables them.
-        let ip = Environment.get("ANALYTICS_TRUST_PROXY") == "true" ? (req.headers.first(name: "x-real-ip") ?? req.headers.first(name: "x-forwarded-for")?.split(separator: ",").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? peer) : peer
+        let ip = usageIPAddress(headers: req.headers, peer: peer, trustProxy: Environment.get("ANALYTICS_TRUST_PROXY") == "true")
         guard await UsageIngress.shared.allowed(ip), await UsageIngress.shared.allowed("peer:" + (req.remoteAddress?.ipAddress ?? "unknown"), limit: 600) else { throw Abort(.tooManyRequests) }
         let existing = try await UsageEvent.find(input.id, on: req.db)
         let event = makeUsageEvent(input, headers: req.headers, ip: ip, existing: existing)
@@ -122,7 +139,7 @@ func usageAnalyticsRoutes(_ app: Application) throws {
             let day = formatter.string(from:calendar.date(byAdding:.day,value:offset,to:cutoff)!), rows = eventDays[day] ?? []
             return UsageDay(date:day,pageViews:rows.filter { $0.kind == "page_view" }.count,appOpens:rows.filter { $0.kind == "app_open" }.count,appStoreClicks:rows.filter { $0.kind == "app_store_click" }.count,newAccounts:userDays[day]?.count ?? 0,recordedUpdates:updateDays[day]?.count ?? 0)
         }
-        return UsageDashboard(days:days,pageViews:events.filter { $0.kind == "page_view" }.count,appOpens:events.filter { $0.kind == "app_open" }.count,appStoreClicks:events.filter { $0.kind == "app_store_click" }.count,consentedSessions:Set(detailed.compactMap(\.sessionID)).count,detailedEvents:detailed.count,newAccounts:users.count,recordedUpdates:updates.count,daily:daily,countries:dimensions(detailed.map(\.country)),cities:dimensions(detailed.map { event in event.city.map { city in [city,event.region,event.country].compactMap { $0 }.joined(separator:", ") } }),devices:dimensions(detailed.map(\.device)),browsers:dimensions(detailed.map(\.browser)),operatingSystems:dimensions(detailed.map(\.os)),referrers:dimensions(detailed.map(\.referrer)),pages:dimensions(events.map { $0.path }),campaigns:dimensions(detailed.map(\.campaign)),timezones:dimensions(detailed.map(\.timezone)),recent:try events.prefix(100).map { e in UsageVisit(id:try e.requireID(),date:e.createdAt ?? Date(),source:e.source,kind:e.kind,path:e.path,consented:e.consented,country:e.country,region:e.region,city:e.city,device:e.device,browser:e.browser,os:e.os,version:e.version,language:e.language,timezone:e.timezone,referrer:e.referrer,campaign:e.campaign) })
+        return UsageDashboard(locationDiagnostics: .init(databaseAvailable: OfflineLocationLookup.shared.isAvailable, trustedProxyEnabled: Environment.get("ANALYTICS_TRUST_PROXY") == "true", eventsWithCity: detailed.filter { $0.city != nil }.count), days:days,pageViews:events.filter { $0.kind == "page_view" }.count,appOpens:events.filter { $0.kind == "app_open" }.count,appStoreClicks:events.filter { $0.kind == "app_store_click" }.count,consentedSessions:Set(detailed.compactMap(\.sessionID)).count,detailedEvents:detailed.count,newAccounts:users.count,recordedUpdates:updates.count,daily:daily,countries:dimensions(detailed.map(\.country)),cities:dimensions(detailed.map { event in event.city.map { city in [city,event.region,event.country].compactMap { $0 }.joined(separator:", ") } }),devices:dimensions(detailed.map(\.device)),browsers:dimensions(detailed.map(\.browser)),operatingSystems:dimensions(detailed.map(\.os)),referrers:dimensions(detailed.map(\.referrer)),pages:dimensions(events.map { $0.path }),campaigns:dimensions(detailed.map(\.campaign)),timezones:dimensions(detailed.map(\.timezone)),recent:try events.prefix(100).map { e in UsageVisit(id:try e.requireID(),date:e.createdAt ?? Date(),source:e.source,kind:e.kind,path:e.path,consented:e.consented,country:e.country,region:e.region,city:e.city,device:e.device,browser:e.browser,os:e.os,version:e.version,language:e.language,timezone:e.timezone,referrer:e.referrer,campaign:e.campaign) })
     }
 }
 
@@ -130,7 +147,7 @@ private struct UsageRetentionTaskKey: StorageKey { typealias Value = Task<Void,N
 struct UsageRetentionLifecycle: LifecycleHandler {
     func didBootAsync(_ app: Application) async throws {
         guard app.environment != .testing else { return }
-        _ = OfflineLocationLookup.shared
+        if !OfflineLocationLookup.shared.isAvailable { app.logger.warning("City analytics unavailable: offline geoip-city files or location names are missing or invalid in Resources") }
         app.storage[UsageRetentionTaskKey.self] = Task {
             while !Task.isCancelled {
                 do { try await UsageEvent.query(on:app.db).filter(\.$createdAt < Date().addingTimeInterval(-90*86400)).delete() }

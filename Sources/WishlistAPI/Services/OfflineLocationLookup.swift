@@ -21,6 +21,10 @@ struct OfflineLocationLookup: Sendable {
         ipv6 = try? Data(contentsOf:URL(fileURLWithPath:directory+"/geoip-city-v6.bin"),options:.mappedIfSafe)
         locations = (try? JSONDecoder().decode([ApproximateUsageLocation].self,from:Data(contentsOf:URL(fileURLWithPath:directory+"/geoip-locations.json")))) ?? []
     }
+    var isAvailable: Bool {
+        guard let ipv4, let ipv6 else { return false }
+        return !ipv4.isEmpty && ipv4.count % 8 == 0 && !ipv6.isEmpty && ipv6.count % 20 == 0 && !locations.isEmpty
+    }
     func location(for ip: String) -> ApproximateUsageLocation? {
         var bytes = [UInt8](repeating:0,count:16)
         let is4 = bytes.withUnsafeMutableBytes { inet_pton(AF_INET,ip,$0.baseAddress) } == 1
