@@ -67,6 +67,13 @@ struct AppleLoginRequest: Content {
 }
 
 enum AppleSignInValidation {
+    static let currentTermsVersion = "2026-09-10"
+    static func requireRegistrationConsent(termsVersion: String?, ageConfirmed: Bool?) throws {
+        guard termsVersion == currentTermsVersion, ageConfirmed == true else {
+            throw Abort(.preconditionRequired, reason: "Apple account registration requires terms and age confirmation.")
+        }
+    }
+
     static func isValidNonce(_ nonce: String) -> Bool {
         nonce.count >= 32 && nonce.count <= 128
     }
@@ -153,7 +160,7 @@ struct TokenResponse: Content {
 
 struct AuthController: RouteCollection {
     private static let accessTokenTTLSeconds: Int = 60 * 60 * 24 * 30 // 30 days
-    private static let currentTermsVersion = "2026-09-10"
+    private static let currentTermsVersion = AppleSignInValidation.currentTermsVersion
     private static let appleNonceTTL: TimeInterval = 10 * 60
 
     func boot(routes: any RoutesBuilder) throws {
@@ -610,7 +617,14 @@ struct AuthController: RouteCollection {
         guard AppleSignInValidation.matchesTokenNonce(body.nonce, tokenNonce: profile.nonce) else {
             throw Abort(.unauthorized, reason: "Apple sign-in could not be verified.")
         }
-        try await consumeAppleNonce(body.nonce, req: req)
+
+        // Onboarding can retry this credential, but only while its original
+        // challenge is unused and unexpired. Final exchanges consume it under lock.
+        guard let challenge = try await AppleSignInNonce.query(on: req.db)
+            .filter(\.$nonceHash == Tokens.sha256Hex(body.nonce)).first(),
+              challenge.usedAt == nil, challenge.expiresAt > Date() else {
+            throw Abort(.unauthorized, reason: "This Apple sign-in request has expired. Please try again.")
+        }
 
         let subject = profile.subject.value
         guard !subject.isEmpty, subject.count <= 512 else {
@@ -625,6 +639,7 @@ struct AuthController: RouteCollection {
             .first() {
             // The opaque, team-scoped Apple subject is the durable account
             // identifier. Later Apple responses may omit profile information.
+            try await consumeAppleNonce(body.nonce, req: req)
             user = identity.user
         } else {
             guard let email = AppleSignInValidation.verifiedEmail(from: profile)
@@ -641,14 +656,15 @@ struct AuthController: RouteCollection {
                 // nonce, and verified-email claim have all passed may link to
                 // a legacy email/password account. The provider subject is
                 // then stored, so future sign-ins do not depend on email.
+                try await consumeAppleNonce(body.nonce, req: req)
                 user = existingUser
             } else {
-                guard body.acceptedTermsVersion == Self.currentTermsVersion else {
-                    throw Abort(.badRequest, reason: "Accept the Terms of Use and Privacy Policy to create an account.")
-                }
-                guard body.ageConfirmed == true else {
-                    throw Abort(.badRequest, reason: "You must confirm that you are at least 13 years old to create a Hushful account.")
-                }
+                // Keep the one-time challenge available while the native client
+                // presents onboarding. No user or identity exists until consent.
+                try AppleSignInValidation.requireRegistrationConsent(
+                    termsVersion: body.acceptedTermsVersion, ageConfirmed: body.ageConfirmed
+                )
+                try await consumeAppleNonce(body.nonce, req: req)
 
                 let displayName = try validatedAppleDisplayName(body.fullName)
                 try await AuthRateLimitService.enforceNewAccountCreation(req)
@@ -661,7 +677,15 @@ struct AuthController: RouteCollection {
                 user.termsAcceptedAt = Date()
                 user.termsVersion = Self.currentTermsVersion
                 user.ageConfirmedAt = Date()
-                try await user.save(on: req.db)
+                do {
+                    try await user.save(on: req.db)
+                } catch {
+                    // The unique email constraint arbitrates simultaneous first
+                    // sign-ins (including other providers); reuse its winner.
+                    guard let existing = try await User.query(on: req.db)
+                        .filter(\.$email == email).first() else { throw error }
+                    user = existing
+                }
             }
 
             let identity = AuthIdentity(

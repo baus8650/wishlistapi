@@ -2,6 +2,7 @@
 import Foundation
 import JWTKit
 import Testing
+import Vapor
 
 @Suite("Sign in with Apple validation")
 struct AppleSignInValidationTests {
@@ -28,6 +29,24 @@ struct AppleSignInValidationTests {
         #expect(AppleSignInValidation.matchesTokenNonce(nonce, tokenNonce: nonce))
         #expect(!AppleSignInValidation.matchesTokenNonce(nonce, tokenNonce: "different"))
         #expect(!AppleSignInValidation.matchesTokenNonce("short", tokenNonce: "short"))
+    }
+
+    @Test("New Apple accounts require current terms and explicit age confirmation")
+    func requiresRegistrationConsent() throws {
+        for terms in [nil, "old", "2026-09-10"] as [String?] {
+            for age in [nil, false, true] as [Bool?] {
+                if terms == "2026-09-10" && age == true {
+                    try AppleSignInValidation.requireRegistrationConsent(termsVersion: terms, ageConfirmed: age)
+                } else {
+                    do {
+                        try AppleSignInValidation.requireRegistrationConsent(termsVersion: terms, ageConfirmed: age)
+                        Issue.record("Missing consent must require onboarding")
+                    } catch let error as Abort {
+                        #expect(error.status == .preconditionRequired)
+                    }
+                }
+            }
+        }
     }
 
     private func appleIdentity(email: String?, emailVerified: Bool) -> AppleIdentityToken {
