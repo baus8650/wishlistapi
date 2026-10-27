@@ -4,11 +4,8 @@ import Fluent
 /// TestFlight uses Apple's sandbox and does not charge testers.
 struct RevokeGrandfatheredProForPurchaseTesting: AsyncMigration {
     func prepare(on database: any Database) async throws {
-        let users = try await User.query(on: database).all()
-        for user in users where user.hasLifetimePro {
-            user.hasLifetimePro = false
-            try await user.save(on: database)
-        }
+        try await User.query(on: database).filter(\.$hasLifetimePro == true)
+            .set(\.$hasLifetimePro, to: false).update()
     }
 
     func revert(on database: any Database) async throws {

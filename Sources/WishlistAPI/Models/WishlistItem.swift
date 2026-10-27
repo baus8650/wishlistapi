@@ -14,8 +14,11 @@ final class WishlistItem: Model, Content {
     @ID(key: .id)
     var id: UUID?
 
-    @Parent(key: "wishlist_id")
-    var wishlist: Wishlist
+    @OptionalParent(key: "wishlist_id")
+    var wishlist: Wishlist?
+
+    @OptionalParent(key: "inventory_owner_id")
+    var inventoryOwner: User?
 
     @Field(key: "title")
     var title: String
@@ -71,7 +74,7 @@ final class WishlistItem: Model, Content {
 
     init(
         id: UUID? = nil,
-        wishlistId: UUID,
+        wishlistId: UUID?,
         title: String,
         url: String? = nil,
         price: Double? = nil,

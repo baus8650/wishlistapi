@@ -13,11 +13,7 @@ struct GrandfatherExistingUsersIntoPro: AsyncMigration {
         }
         try await sql.raw("ALTER TABLE \"users\" ADD COLUMN IF NOT EXISTS \"has_lifetime_pro\" BOOLEAN NOT NULL DEFAULT false").run()
 
-        let existingUsers = try await User.query(on: database).all()
-        for user in existingUsers {
-            user.hasLifetimePro = true
-            try await user.save(on: database)
-        }
+        try await User.query(on: database).set(\.$hasLifetimePro, to: true).update()
     }
 
     func revert(on database: any Database) async throws {

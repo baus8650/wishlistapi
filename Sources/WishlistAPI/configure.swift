@@ -116,6 +116,8 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateWishlistCollaborators())
     app.migrations.add(AddSharedListNotifications())
     app.migrations.add(AddItemSales())
+    app.migrations.add(AddRecipientSales())
+    app.migrations.add(AddItemInventory())
     app.migrations.add(AddSaleRemindersAndListPurpose())
     app.migrations.add(CreateWishlistItemImages())
     app.migrations.add(CreateWebMetrics())

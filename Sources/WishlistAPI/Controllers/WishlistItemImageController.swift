@@ -22,6 +22,8 @@ struct WishlistItemImageController: RouteCollection {
     }
 
     private func canView(itemID: UUID, req: Request) async throws -> Bool {
+        if let accountID = req.auth.get(User.self)?.id,
+           let item = try await WishlistItem.find(itemID, on: req.db), item.$inventoryOwner.id == accountID { return true }
         let memberships = try await WishlistItemMembership.query(on: req.db)
             .filter(\.$item.$id == itemID).with(\.$wishlist) { $0.with(\.$owner) }.all()
         guard !memberships.isEmpty else { return false }

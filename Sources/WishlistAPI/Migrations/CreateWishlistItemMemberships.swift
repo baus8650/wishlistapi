@@ -1,4 +1,6 @@
 import Fluent
+import SQLKit
+import Vapor
 
 struct CreateWishlistItemMemberships: AsyncMigration {
     func prepare(on database: any Database) async throws {
@@ -14,21 +16,14 @@ struct CreateWishlistItemMemberships: AsyncMigration {
             .ignoreExisting()
             .create()
 
-        for item in try await WishlistItem.query(on: database).all() {
-            let itemID = try item.requireID()
-            let wishlistID = item.$wishlist.id
-            let exists = try await WishlistItemMembership.query(on: database)
-                .filter(\.$item.$id == itemID)
-                .filter(\.$wishlist.$id == wishlistID)
-                .first() != nil
-            if !exists {
-                try await WishlistItemMembership(
-                    itemID: itemID,
-                    wishlistID: wishlistID,
-                    position: item.position
-                ).save(on: database)
-            }
-        }
+        // Seed only fields available at this point, independent of future item model fields.
+        guard let sql = database as? any SQLDatabase else { throw Abort(.internalServerError) }
+        try await sql.raw("""
+            INSERT INTO wishlist_item_memberships (id, item_id, wishlist_id, position)
+            SELECT gen_random_uuid(), id, wishlist_id, position FROM wishlist_items
+            WHERE wishlist_id IS NOT NULL
+            ON CONFLICT (item_id, wishlist_id) DO NOTHING
+            """).run()
     }
 
     func revert(on database: any Database) async throws {

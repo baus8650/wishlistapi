@@ -216,6 +216,7 @@ struct WishlistItemController: RouteCollection {
         )
         try applySale(item, price: body.price, salePrice: body.salePrice, discount: body.saleDiscountPercent, endsAt: body.saleEndsAt)
         try await validateOwnerNoteMentions(body.ownerNote ?? "", wishlist: wishlist, actorID: userId, on: req.db)
+        item.$inventoryOwner.id = wishlist.$owner.id
         try await item.save(on: req.db)
         try await syncMemberships(item: item, userID: userId, requestedIDs: Set((body.linkedWishlistIDs ?? []) + [wishlistID]), on: req.db)
         await notifyOwnerNoteMentions(body.ownerNote, wishlist: wishlist, actor: user, req: req)
@@ -369,7 +370,11 @@ struct WishlistItemController: RouteCollection {
             }
             try await currentMembership.delete(on: req.db)
         } else {
-            try await item.delete(on: req.db)
+            // Removing the last list entry keeps the canonical item in Items.
+            item.$inventoryOwner.id = item.$inventoryOwner.id ?? wishlist.$owner.id
+            item.$wishlist.id = nil
+            try await item.save(on: req.db)
+            try await currentMembership.delete(on: req.db)
         }
         let actorName = ActivityService.actorName(for: user)
         try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) removed an item from “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
@@ -407,7 +412,7 @@ struct WishlistItemController: RouteCollection {
             .first()
     }
 
-    private func syncMemberships(item: WishlistItem, userID: UUID, requestedIDs: Set<UUID>, on database: any Database) async throws {
+    func syncMemberships(item: WishlistItem, userID: UUID, requestedIDs: Set<UUID>, on database: any Database) async throws {
         for wishlistID in requestedIDs {
             guard try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userID, on: database) else {
                 throw Abort(.forbidden, reason: "Items can only be linked to wishlists you can edit.")
@@ -424,7 +429,7 @@ struct WishlistItemController: RouteCollection {
         }
     }
 
-    private func validatedType(_ value: String?, url: String?, goal: Double?) throws -> String {
+    func validatedType(_ value: String?, url: String?, goal: Double?) throws -> String {
         let type = value ?? "wish"
         guard type == "wish" || type == "cash_fund" else { throw Abort(.badRequest, reason: "Invalid item type.") }
         if let goal, goal <= 0 { throw Abort(.badRequest, reason: "Contribution goal must be greater than zero.") }

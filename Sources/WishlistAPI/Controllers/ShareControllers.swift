@@ -65,12 +65,21 @@ struct RecipientShareController: RouteCollection {
         let sharedByName: String
     }
 
+    // Stored only on viewer state; never on the owner-visible item.
+    struct RecipientSale: Content {
+        var salePrice: Double?
+        var saleDiscountPercent: Double?
+        var saleEndsAt: Date?
+        var reportedAt: Date? = nil
+    }
+
     struct UpsertStateRequest: Content {
         let purchased: Bool?
         let note: String?
         let displayName: String?
         let shareName: Bool?
         let purchasedQuantity: Int?
+        var recipientSale: RecipientSale? = nil
     }
 
     struct RecipientNote: Content {
@@ -103,6 +112,7 @@ struct RecipientShareController: RouteCollection {
         let purchasedQuantity: Int   // total quantity claimed by all viewers
         let purchasedQuantityByMe: Int
         let purchasedByNames: [String]? // named planners who purchased (gift planning only)
+        var recipientSale: RecipientSale? = nil
         let notes: [RecipientNote]   // notes from all recipients
     }
 
@@ -297,6 +307,7 @@ struct RecipientShareController: RouteCollection {
     }
 
     func listItemsWithState(req: Request, wishlist: Wishlist, viewer: WishlistViewer) async throws -> [ItemWithRecipientInfo] {
+        try await ensureDiscussionAccess(wishlist: wishlist, viewer: viewer, req: req)
         let wishlistId = try wishlist.requireID()
         let viewerId = try viewer.requireID()
 
@@ -406,6 +417,13 @@ struct RecipientShareController: RouteCollection {
                 purchasedQuantity: purchasedQuantity,
                 purchasedQuantityByMe: purchasedQuantityByMe,
                 purchasedByNames: purchasedByNames,
+                recipientSale: itemStates
+                    .filter {
+                        guard viewerWishlistByID[$0.$viewer.id] == wishlistId, let sale = $0.recipientSale else { return false }
+                        return (sale.salePrice != nil || sale.saleDiscountPercent != nil) && (sale.saleEndsAt.map { $0 > Date() } ?? true)
+                    }
+                    .sorted { ($0.recipientSale?.reportedAt ?? .distantPast) > ($1.recipientSale?.reportedAt ?? .distantPast) }
+                    .first?.recipientSale,
                 notes: notes
             )
         }
@@ -419,6 +437,7 @@ struct RecipientShareController: RouteCollection {
 
     func upsertState(req: Request, wishlist: Wishlist, viewer: WishlistViewer) async throws -> ItemWithRecipientInfo {
         let body = try req.content.decode(UpsertStateRequest.self)
+        try await ensureDiscussionAccess(wishlist: wishlist, viewer: viewer, req: req)
         let wishlistId = try wishlist.requireID()
         let viewerId = try viewer.requireID()
         try await AuthRateLimitService.enforce(req, scope: "shared-state:\(viewerId)", limit: 120, window: 60 * 60)
@@ -452,6 +471,10 @@ struct RecipientShareController: RouteCollection {
             .first() != nil,
               let item = try await WishlistItem.find(itemID, on: req.db)
         else { throw Abort(.notFound) }
+
+        if let sale = body.recipientSale {
+            try validateRecipientSale(sale, item: item, wishlistID: wishlistId)
+        }
 
         let state = try await ItemViewerState.query(on: req.db)
             .filter(\.$item.$id == itemID)
@@ -513,6 +536,7 @@ struct RecipientShareController: RouteCollection {
         }
 
         if let state {
+            if var sale = body.recipientSale { sale.reportedAt = Date(); state.recipientSale = sale }
             if let desiredQuantity {
                 state.purchasedQuantity = desiredQuantity
                 state.purchased = desiredQuantity > 0
@@ -560,13 +584,14 @@ struct RecipientShareController: RouteCollection {
                 return [RecipientNote(stateID: state.id, note: raw, authorDisplayName: author, updatedAt: state.updatedAt, isMine: true)]
             }()
 
-            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchasedByMe, purchasedByOthers: purchasedQuantity > state.purchasedQuantity, purchasedQuantity: purchasedQuantity, purchasedQuantityByMe: state.purchasedQuantity, purchasedByNames: purchasedByNames, notes: notes)
+            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchasedByMe, purchasedByOthers: purchasedQuantity > state.purchasedQuantity, purchasedQuantity: purchasedQuantity, purchasedQuantityByMe: state.purchasedQuantity, purchasedByNames: purchasedByNames, recipientSale: state.recipientSale, notes: notes)
         } else {
             let purchasedQuantity = desiredQuantity ?? 0
             let purchased = purchasedQuantity > 0
             let shareName = body.shareName ?? false
             if let note = body.note, wishlist.allowNotes { try ContentSafetyService.validate(note, field: "note") }
             let newState = ItemViewerState(itemId: itemID, viewerId: viewerId, purchased: purchased, purchasedQuantity: purchasedQuantity, note: wishlist.allowNotes ? body.note : nil, shareName: shareName)
+            if var sale = body.recipientSale { sale.reportedAt = Date(); newState.recipientSale = sale }
             try await newState.save(on: req.db)
             if let note = body.note, let actorID = viewer.$user.id {
                 do {
@@ -605,7 +630,17 @@ struct RecipientShareController: RouteCollection {
                 on: req.db
             )
 
-            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchased, purchasedByOthers: totalPurchasedQuantity > purchasedQuantity, purchasedQuantity: totalPurchasedQuantity, purchasedQuantityByMe: purchasedQuantity, purchasedByNames: purchasedByNames, notes: notes)
+            return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchased, purchasedByOthers: totalPurchasedQuantity > purchasedQuantity, purchasedQuantity: totalPurchasedQuantity, purchasedQuantityByMe: purchasedQuantity, purchasedByNames: purchasedByNames, recipientSale: newState.recipientSale, notes: notes)
+        }
+    }
+
+    func validateRecipientSale(_ sale: RecipientSale, item: WishlistItem, wishlistID: UUID) throws {
+        let validationItem = WishlistItem(wishlistId: wishlistID, title: item.title, price: item.price)
+        validationItem.itemType = item.itemType
+        try WishlistItemController().applySale(validationItem, price: item.price,
+            salePrice: sale.salePrice, discount: sale.saleDiscountPercent, endsAt: sale.saleEndsAt)
+        if let end = sale.saleEndsAt, end <= Date() {
+            throw Abort(.badRequest, reason: "The sale end must be in the future.")
         }
     }
 

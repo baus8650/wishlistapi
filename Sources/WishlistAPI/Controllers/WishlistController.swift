@@ -239,8 +239,11 @@ struct WishlistController: RouteCollection {
                 .filter(\.$wishlist.$id != wishlistID)
                 .first() {
                 item.$wishlist.id = replacement.$wishlist.id
-                try await item.save(on: req.db)
+            } else {
+                item.$wishlist.id = nil
             }
+            item.$inventoryOwner.id = item.$inventoryOwner.id ?? userId
+            try await item.save(on: req.db)
         }
         try await wishlist.delete(on: req.db)
         return .noContent
@@ -402,6 +405,7 @@ struct WishlistController: RouteCollection {
             let item = WishlistItem(wishlistId: try copy.requireID(), title: sourceItem.title, url: sourceItem.url,
                                     price: sourceItem.price, ownerNote: sourceItem.ownerNote, quantity: sourceItem.quantity,
                                     itemType: sourceItem.itemType, contributionGoal: sourceItem.contributionGoal)
+            item.$inventoryOwner.id = userID
             item.salePrice = sourceItem.salePrice
             item.saleDiscountPercent = sourceItem.saleDiscountPercent
             item.saleEndsAt = sourceItem.saleEndsAt

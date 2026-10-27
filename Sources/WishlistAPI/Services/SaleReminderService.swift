@@ -8,10 +8,38 @@ enum SaleNotificationService {
         return recipientIDs.subtracting(Set([ownerID] + (actorID.map { [$0] } ?? [])))
     }
 
+    struct ListAudience {
+        let wishlist: Wishlist
+        let recipientIDs: Set<UUID>
+    }
+
+    struct NotificationTarget {
+        let userID: UUID
+        let wishlistID: UUID
+        let wishlistTitle: String
+    }
+
+    // Deduplicate per item event, while keeping a destination the recipient can access.
+    // A muted list never consumes that recipient's notification from another list.
+    static func notificationTargets(for lists: [ListAudience], actorID: UUID?) throws -> [NotificationTarget] {
+        var notified = Set<UUID>()
+        var targets: [NotificationTarget] = []
+        for entry in lists where !entry.wishlist.isArchived {
+            let list = entry.wishlist
+            for userID in audience(purpose: list.purpose, ownerID: list.$owner.id,
+                                   recipientIDs: entry.recipientIDs, actorID: actorID) {
+                guard notified.insert(userID).inserted else { continue }
+                targets.append(.init(userID: userID, wishlistID: try list.requireID(), wishlistTitle: list.title))
+            }
+        }
+        return targets
+    }
+
     static func notify(item: WishlistItem, actorID: UUID?, title: String, message: String,
                        on db: any Database, client: any Client, logger: Logger) async throws {
         let memberships = try await WishlistItemMembership.query(on: db)
             .filter(\.$item.$id == item.requireID()).with(\.$wishlist).all()
+        var lists: [ListAudience] = []
         for membership in memberships where !membership.wishlist.isArchived {
             let list = membership.wishlist
             let listID = membership.$wishlist.id
@@ -22,12 +50,13 @@ enum SaleNotificationService {
                 recipientIDs.formUnion(social.filter { $0.viewer.notificationsEnabled }.map(\.$user.id))
                 recipientIDs.formUnion(saved.filter { $0.viewer.notificationsEnabled }.compactMap { $0.viewer.$user.id })
             }
-            for userID in audience(purpose: list.purpose, ownerID: list.$owner.id, recipientIDs: recipientIDs, actorID: actorID) {
-                // Self-directed alerts must not be suppressed as the actor's own activity.
-                try await ActivityService.create(userID: userID, actorID: userID == actorID ? nil : actorID,
-                    wishlistID: listID, kind: "wishlist_updated", title: title,
-                    message: "\(message) in “\(list.title)”. Tap to view the item.", on: db, client: client, logger: logger)
-            }
+            lists.append(.init(wishlist: list, recipientIDs: recipientIDs))
+        }
+        for target in try notificationTargets(for: lists, actorID: actorID) {
+            // Self-directed alerts must not be suppressed as the actor's own activity.
+            try await ActivityService.create(userID: target.userID, actorID: target.userID == actorID ? nil : actorID,
+                wishlistID: target.wishlistID, kind: "wishlist_updated", title: title,
+                message: "\(message) in “\(target.wishlistTitle)”. Tap to view the item.", on: db, client: client, logger: logger)
         }
     }
 }

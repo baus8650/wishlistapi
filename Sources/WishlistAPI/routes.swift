@@ -169,6 +169,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: AdminProController())
 
     // Mount wishlists at /wishlists
+    try protected.register(collection: ItemInventoryController())
     let wishlists = protected.grouped("wishlists")
     try wishlists.register(collection: WishlistController())
     try wishlists.register(collection: WishlistDiscussionController())

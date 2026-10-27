@@ -10,11 +10,9 @@ struct AddOnboardingState: AsyncMigration {
 
         // Accounts created before this flow existed have already completed the
         // old setup and should not be forced through the new tutorial.
-        let existingUsers = try await User.query(on: database).all()
-        for user in existingUsers where user.onboardingVersion == nil && user.username != nil && user.privacySetupCompleted != false {
-            user.onboardingVersion = 1
-            try await user.save(on: database)
-        }
+        try await User.query(on: database).filter(\.$onboardingVersion == nil).filter(\.$username != nil)
+            .group(.or) { $0.filter(\.$privacySetupCompleted == nil).filter(\.$privacySetupCompleted == true) }
+            .set(\.$onboardingVersion, to: 1).update()
     }
 
     func revert(on database: any Database) async throws {

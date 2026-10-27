@@ -32,6 +32,9 @@ final class ItemViewerState: Model, Content {
     @OptionalField(key: "note")
     var note: String?
 
+    @OptionalField(key: "recipient_sale")
+    var recipientSale: RecipientShareController.RecipientSale?
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 

@@ -10,11 +10,8 @@ struct AddEmailVerification: AsyncMigration {
             .field("email_verified_at", .datetime)
             .update()
 
-        let existingUsers = try await User.query(on: database).all()
-        for user in existingUsers where user.emailVerifiedAt == nil {
-            user.emailVerifiedAt = Date()
-            try await user.save(on: database)
-        }
+        try await User.query(on: database).filter(\.$emailVerifiedAt == nil)
+            .set(\.$emailVerifiedAt, to: Date()).update()
 
         try await database.schema(EmailVerificationToken.schema)
             .id()
