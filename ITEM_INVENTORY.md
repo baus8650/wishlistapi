@@ -27,3 +27,13 @@ when all memberships are removed, retention belongs to the inventory owner.
 
 Database-backed lifecycle tests cover retention, reuse, global deletion,
 permission enforcement, retained photos, and migration backfill/rollback.
+
+Item DELETE endpoints accept an optional JSON body with `reason`
+(`not_specified`, `no_longer_wanted`, `already_purchased`, `replaced`,
+`added_by_mistake`, `other`) and optional `note` (Other only, max 240 characters).
+Empty bodies and `{}` remain supported. Active signed-in claimants whose viewer
+notifications are enabled receive one `claimed_item_removed` activity entry.
+Alerts persist in the deletion transaction; APNs/FCM pushes send after commit.
+Removing the final list membership through item removal or inventory editing
+also alerts claimants. Later deletion of the retained No-list item does not send
+a second alert. Removal from one of several lists is not reported as deletion.

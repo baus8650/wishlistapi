@@ -31,12 +31,12 @@ enum ActivityService {
         }
     }
 
-    static func notifyRecipients(wishlistID: UUID, actorID: UUID, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
+    static func notifyRecipients(wishlistID: UUID, actorID: UUID, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil, excludingUserIDs: Set<UUID> = []) async throws {
         let socialAccess = try await SocialWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).with(\.$viewer).all()
         let publicAccess = try await PublicWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).with(\.$viewer).all()
         let socialRecipients = socialAccess.filter { $0.viewer.notificationsEnabled }.map(\.$user.id)
         let publicRecipients = publicAccess.filter { $0.viewer.notificationsEnabled }.compactMap { $0.viewer.$user.id }
-        let recipients = Set(socialRecipients + publicRecipients)
+        let recipients = Set(socialRecipients + publicRecipients).subtracting(excludingUserIDs)
         for userID in recipients { try await create(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message, on: db, client: client, logger: logger) }
     }
 }

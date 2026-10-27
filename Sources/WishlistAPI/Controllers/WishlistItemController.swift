@@ -341,43 +341,36 @@ struct WishlistItemController: RouteCollection {
 
     // DELETE /wishlists/:wishlistID/items/:itemID
     func delete(req: Request) async throws -> HTTPStatus {
-        let user = try req.auth.require(User.self)
-        let userId = try user.requireID()
-
-        guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid wishlistID.")
-        }
-
-        guard let itemID = req.parameters.get("itemID", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Invalid itemID.")
-        }
-
-        guard let item = try await WishlistItem.find(itemID, on: req.db) else {
-            throw Abort(.notFound)
-        }
-
-        // Ensure item belongs to the wishlist in the route
-        guard let currentMembership = try await membership(itemID: itemID, wishlistID: wishlistID, on: req.db) else { throw Abort(.notFound) }
-
-        guard let wishlist = try await Wishlist.find(wishlistID, on: req.db),
-              try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
-
-        let allMemberships = try await WishlistItemMembership.query(on: req.db).filter(\.$item.$id == itemID).all()
-        if allMemberships.count > 1 {
-            if item.$wishlist.id == wishlistID, let replacement = allMemberships.first(where: { $0.$wishlist.id != wishlistID }) {
-                item.$wishlist.id = replacement.$wishlist.id
-                try await item.save(on: req.db)
+        let user = try req.auth.require(User.self), userID = try user.requireID()
+        let reason = try ItemDeletionRequest.read(from: req)
+        guard let wishlistID = req.parameters.get("wishlistID", as: UUID.self),
+              let itemID = req.parameters.get("itemID", as: UUID.self) else { throw Abort(.badRequest) }
+        let result = try await req.db.transaction { db -> ([ItemDeletionNotificationService.Delivery], String) in
+            try await ItemDeletionNotificationService.lockItem(itemID, on: db)
+            guard let item = try await WishlistItem.find(itemID, on: db),
+                  let current = try await membership(itemID: itemID, wishlistID: wishlistID, on: db),
+                  let wishlist = try await Wishlist.find(wishlistID, on: db),
+                  try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userID, on: db) else { throw Abort(.notFound) }
+            let memberships = try await WishlistItemMembership.query(on: db).filter(\.$item.$id == itemID).all()
+            let remaining = memberships.filter { $0.$wishlist.id != wishlistID }
+            var deliveries: [ItemDeletionNotificationService.Delivery] = []
+            if remaining.isEmpty {
+                deliveries = try await ItemDeletionNotificationService.record(item: item, actorID: userID,
+                    reason: reason, permanentlyDeleted: false, on: db)
+                item.$inventoryOwner.id = item.$inventoryOwner.id ?? wishlist.$owner.id
+                item.$wishlist.id = nil
+                try await item.save(on: db)
+            } else if item.$wishlist.id == wishlistID {
+                item.$wishlist.id = remaining[0].$wishlist.id
+                try await item.save(on: db)
             }
-            try await currentMembership.delete(on: req.db)
-        } else {
-            // Removing the last list entry keeps the canonical item in Items.
-            item.$inventoryOwner.id = item.$inventoryOwner.id ?? wishlist.$owner.id
-            item.$wishlist.id = nil
-            try await item.save(on: req.db)
-            try await currentMembership.delete(on: req.db)
+            try await current.delete(on: db)
+            return (deliveries, wishlist.title)
         }
-        let actorName = ActivityService.actorName(for: user)
-        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) removed an item from “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
+        await ItemDeletionNotificationService.send(result.0, req: req)
+        try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userID, kind: "wishlist_updated",
+            title: "Shared wishlist updated", message: "\(ActivityService.actorName(for: user)) removed an item from “\(result.1)”. Tap to check it out.",
+            on: req.db, client: req.client, logger: req.logger, excludingUserIDs: Set(result.0.map(\.userID)))
         return .noContent
     }
 

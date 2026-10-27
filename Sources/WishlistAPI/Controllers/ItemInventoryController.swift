@@ -84,7 +84,7 @@ struct ItemInventoryController: RouteCollection {
         let controller = WishlistItemController()
         let type = try controller.validatedType(body.itemType, url: body.url, goal: body.contributionGoal)
         if type == "cash_fund" { try ProAccessService.requirePro(user) }
-        let result = try await req.db.transaction { db -> (WishlistItem, Double?) in
+        let result = try await req.db.transaction { db -> (WishlistItem, Double?, [ItemDeletionNotificationService.Delivery]) in
             let item: WishlistItem
             let editable: Set<UUID>
             let previousLinks: Set<UUID>
@@ -94,6 +94,8 @@ struct ItemInventoryController: RouteCollection {
                 item = WishlistItem(wishlistId: nil, title: title)
                 item.$inventoryOwner.id = userID
             } else {
+                guard let id = req.parameters.get("itemID", as: UUID.self) else { throw Abort(.badRequest) }
+                try await ItemDeletionNotificationService.lockItem(id, on: db)
                 (item, editable, previousLinks) = try await authorizedItem(req: req, on: db)
             }
             let requested = Set(body.linkedWishlistIDs ?? Array(previousLinks.intersection(editable)))
@@ -101,6 +103,9 @@ struct ItemInventoryController: RouteCollection {
             // Lists the editor cannot access remain linked and are never exposed by the inventory.
             let retained = previousLinks.subtracting(editable)
             let finalLinks = requested.union(retained)
+            let deliveries = finalLinks.isEmpty && !previousLinks.isEmpty
+                ? try await ItemDeletionNotificationService.record(item: item, actorID: userID, reason: .init(), permanentlyDeleted: false, on: db)
+                : []
             let previousSale = item.activeSalePrice
             item.itemType = type
             try controller.applySale(item, price: body.price, salePrice: body.salePrice,
@@ -121,8 +126,9 @@ struct ItemInventoryController: RouteCollection {
                 let maxPosition = try await WishlistItemMembership.query(on: db).filter(\.$wishlist.$id == id).max(\.$position) ?? -1
                 try await WishlistItemMembership(itemID: item.requireID(), wishlistID: id, position: maxPosition + 1).save(on: db)
             }
-            return (item, previousSale)
+            return (item, previousSale, deliveries)
         }
+        await ItemDeletionNotificationService.send(result.2, req: req)
         if let _ = result.0.activeSalePrice, result.0.activeSalePrice != result.1 {
             try await SaleNotificationService.notify(item: result.0, actorID: userID, title: "Wishlist item on sale",
                 message: "\(result.0.title) is on sale", on: req.db, client: req.client, logger: req.logger)
@@ -135,11 +141,17 @@ struct ItemInventoryController: RouteCollection {
 
     func updateLinks(req: Request) async throws -> HTTPStatus {
         let body = try req.content.decode(LinksRequest.self)
-        try await req.db.transaction { db in
+        guard let itemID = req.parameters.get("itemID", as: UUID.self) else { throw Abort(.badRequest) }
+        let actorID = try req.auth.require(User.self).requireID()
+        let deliveries = try await req.db.transaction { db in
+            try await ItemDeletionNotificationService.lockItem(itemID, on: db)
             let (item, editable, previous) = try await authorizedItem(req: req, on: db)
             let selected = Set(body.wishlistIDs)
             guard selected.isSubset(of: editable) else { throw Abort(.forbidden, reason: "Choose lists you can edit.") }
             let final = selected.union(previous.subtracting(editable))
+            let deliveries = final.isEmpty && !previous.isEmpty
+                ? try await ItemDeletionNotificationService.record(item: item, actorID: actorID, reason: .init(), permanentlyDeleted: false, on: db)
+                : []
             let existing = try await WishlistItemMembership.query(on: db).filter(\.$item.$id == item.requireID()).all()
             for link in existing where !final.contains(link.$wishlist.id) { try await link.delete(on: db) }
             for id in final.subtracting(previous) {
@@ -148,16 +160,31 @@ struct ItemInventoryController: RouteCollection {
             }
             item.$wishlist.id = final.sorted { $0.uuidString < $1.uuidString }.first
             try await item.save(on: db)
+            return deliveries
         }
+        await ItemDeletionNotificationService.send(deliveries, req: req)
         return .noContent
     }
 
     func delete(req: Request) async throws -> HTTPStatus {
-        try await req.db.transaction { db in
+        let reason = try ItemDeletionRequest.read(from: req)
+        let actorID = try req.auth.require(User.self).requireID()
+        guard let itemID = req.parameters.get("itemID", as: UUID.self) else { throw Abort(.badRequest) }
+        let deliveries = try await req.db.transaction { db in
+            try await ItemDeletionNotificationService.lockItem(itemID, on: db)
             let (item, editable, linked) = try await authorizedItem(req: req, on: db)
             guard linked.isSubset(of: editable) else { throw Abort(.forbidden, reason: "This item also appears on a list you cannot edit. Remove it from your lists instead.") }
+            // Detached items were already removed from recipients' lists; don't notify twice.
+            let deliveries: [ItemDeletionNotificationService.Delivery]
+            if linked.isEmpty { deliveries = [] }
+            else {
+                deliveries = try await ItemDeletionNotificationService.record(item: item, actorID: actorID,
+                    reason: reason, permanentlyDeleted: true, on: db)
+            }
             try await item.delete(on: db)
+            return deliveries
         }
+        await ItemDeletionNotificationService.send(deliveries, req: req)
         return .noContent
     }
 
