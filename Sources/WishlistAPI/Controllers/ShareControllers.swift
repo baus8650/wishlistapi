@@ -60,6 +60,7 @@ struct RecipientShareController: RouteCollection {
     }
 
     struct SharedWishlistPublic: Content {
+        var description: String? = nil
         let id: UUID
         let title: String
         let sharedByName: String
@@ -699,6 +700,7 @@ struct RecipientShareController: RouteCollection {
         let configuredName = owner.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackName = owner.email.split(separator: "@", maxSplits: 1).first.map(String.init) ?? "Someone"
         return .init(
+            description: wishlist.descriptionText,
             id: try wishlist.requireID(),
             title: wishlist.title,
             sharedByName: configuredName?.isEmpty == false ? configuredName! : fallbackName

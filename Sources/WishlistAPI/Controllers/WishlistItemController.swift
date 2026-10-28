@@ -153,7 +153,7 @@ struct WishlistItemController: RouteCollection {
         if saleChanged {
             try await notifySale(item: item, actorID: userId, req: req)
         } else {
-            try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) updated an item in “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
+            try await ActivityService.notifyRecipients(wishlistID: wishlistID, itemID: try item.requireID(), actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) updated an item in “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
         }
         return item
     }
@@ -224,7 +224,7 @@ struct WishlistItemController: RouteCollection {
         if item.activeSalePrice != nil {
             try await notifySale(item: item, actorID: userId, req: req)
         } else {
-            try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "New wishlist item", message: "\(actorName) added a new item to “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
+            try await ActivityService.notifyRecipients(wishlistID: wishlistID, itemID: try item.requireID(), actorID: userId, kind: "wishlist_updated", title: "New wishlist item", message: "\(actorName) added a new item to “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
         }
         return item
     }
@@ -334,7 +334,7 @@ struct WishlistItemController: RouteCollection {
         if saleChanged {
             try await notifySale(item: item, actorID: userId, req: req)
         } else {
-            try await ActivityService.notifyRecipients(wishlistID: wishlistID, actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) updated an item in “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
+            try await ActivityService.notifyRecipients(wishlistID: wishlistID, itemID: try item.requireID(), actorID: userId, kind: "wishlist_updated", title: "Shared wishlist updated", message: "\(actorName) updated an item in “\(wishlist.title)”. Tap to check it out.", on: req.db, client: req.client, logger: req.logger)
         }
         return item
     }

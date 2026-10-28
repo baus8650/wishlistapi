@@ -7,6 +7,7 @@ final class ActivityNotification: Model, @unchecked Sendable {
     @Parent(key: "user_id") var user: User
     @OptionalParent(key: "actor_id") var actor: User?
     @OptionalParent(key: "wishlist_id") var wishlist: Wishlist?
+    @OptionalField(key: "item_id") var itemID: UUID?
     @Field(key: "kind") var kind: String
     @Field(key: "title") var title: String
     @Field(key: "message") var message: String
@@ -14,10 +15,11 @@ final class ActivityNotification: Model, @unchecked Sendable {
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
 
     init() {}
-    init(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, kind: String, title: String, message: String) {
+    init(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, itemID: UUID? = nil, kind: String, title: String, message: String) {
         self.$user.id = userID
         if let actorID { self.$actor.id = actorID }
         if let wishlistID { self.$wishlist.id = wishlistID }
+        self.itemID = itemID
         self.kind = kind; self.title = title; self.message = message
     }
 }

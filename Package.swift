@@ -7,6 +7,7 @@ let package = Package(
        .macOS(.v13)
     ],
     dependencies: [
+        .package(path: "Vendor/postgres-nio"),
         .package(url: "https://github.com/apple/app-store-server-library-swift.git", .upToNextMinor(from: "6.0.0")),
         // 💧 A server-side Swift web framework.
         .package(url: "https://github.com/vapor/vapor.git", from: "4.115.0"),
@@ -34,6 +35,7 @@ let package = Package(
             dependencies: [
                 .target(name: "WishlistAPI"),
                 .product(name: "VaporTesting", package: "vapor"),
+                .product(name: "PostgresNIO", package: "postgres-nio"),
             ],
             swiftSettings: swiftSettings
         )

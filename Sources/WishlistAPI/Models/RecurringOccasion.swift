@@ -4,6 +4,8 @@ import Vapor
 final class RecurringOccasion: Model, @unchecked Sendable {
     static let schema = "recurring_occasions"
     @ID(key: .id) var id: UUID?
+    @OptionalParent(key: "person_id") var person: User?
+    @Field(key: "notifications_enabled") var notificationsEnabled: Bool
     @Parent(key: "owner_id") var owner: User
     @Field(key: "name") var name: String
     @Field(key: "name_search") var nameSearch: String
@@ -18,6 +20,7 @@ final class RecurringOccasion: Model, @unchecked Sendable {
     @Timestamp(key: "updated_at", on: .update) var updatedAt: Date?
     init() {}
     init(id: UUID? = nil, ownerID: UUID, name: String, eventMonth: Int, eventDay: Int, reminderMonth: Int, reminderDay: Int, icon: String, colorHex: String, lastCreatedYear: Int?) {
+        self.notificationsEnabled = true
         self.id = id; self.$owner.id = ownerID; self.name = name; self.nameSearch = name.lowercased()
         self.eventMonth = eventMonth; self.eventDay = eventDay; self.reminderMonth = reminderMonth; self.reminderDay = reminderDay
         self.icon = icon; self.colorHex = colorHex; self.lastCreatedYear = lastCreatedYear

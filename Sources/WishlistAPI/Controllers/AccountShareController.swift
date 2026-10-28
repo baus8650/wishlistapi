@@ -3,6 +3,7 @@ import Vapor
 
 struct AccountShareController: RouteCollection {
     struct SavedShare: Content {
+        var description: String? = nil
         var purpose: String? = nil
         let id: UUID
         let wishlistID: UUID
@@ -196,6 +197,7 @@ struct AccountShareController: RouteCollection {
         let configuredName = owner.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackName = owner.email.split(separator: "@", maxSplits: 1).first.map(String.init) ?? "Someone"
         return SavedShare(
+            description: wishlist.descriptionText,
             purpose: wishlist.purpose,
             id: try viewer.requireID(),
             wishlistID: try wishlist.requireID(),

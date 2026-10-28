@@ -8,6 +8,7 @@ struct ActivityDTO: Content {
     let message: String
     let actorID: UUID?
     let wishlistID: UUID?
+    var itemID: UUID? = nil
     let readAt: Date?
     let createdAt: Date?
 }
@@ -22,22 +23,22 @@ enum ActivityService {
         return name.isEmpty ? fallback : name
     }
 
-    static func create(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
+    static func create(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, itemID: UUID? = nil, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
         guard userID != actorID else { return }
-        try await ActivityNotification(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message).save(on: db)
+        try await ActivityNotification(userID: userID, actorID: actorID, wishlistID: wishlistID, itemID: itemID, kind: kind, title: title, message: message).save(on: db)
         if let client, let logger {
-            await APNSService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, on: db, client: client, logger: logger)
-            await FCMService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, on: db, client: client, logger: logger)
+            await APNSService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, itemID: itemID, on: db, client: client, logger: logger)
+            await FCMService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, itemID: itemID, on: db, client: client, logger: logger)
         }
     }
 
-    static func notifyRecipients(wishlistID: UUID, actorID: UUID, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil, excludingUserIDs: Set<UUID> = []) async throws {
+    static func notifyRecipients(wishlistID: UUID, itemID: UUID? = nil, actorID: UUID, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil, excludingUserIDs: Set<UUID> = []) async throws {
         let socialAccess = try await SocialWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).with(\.$viewer).all()
         let publicAccess = try await PublicWishlistAccess.query(on: db).filter(\.$wishlist.$id == wishlistID).with(\.$viewer).all()
         let socialRecipients = socialAccess.filter { $0.viewer.notificationsEnabled }.map(\.$user.id)
         let publicRecipients = publicAccess.filter { $0.viewer.notificationsEnabled }.compactMap { $0.viewer.$user.id }
         let recipients = Set(socialRecipients + publicRecipients).subtracting(excludingUserIDs)
-        for userID in recipients { try await create(userID: userID, actorID: actorID, wishlistID: wishlistID, kind: kind, title: title, message: message, on: db, client: client, logger: logger) }
+        for userID in recipients { try await create(userID: userID, actorID: actorID, wishlistID: wishlistID, itemID: itemID, kind: kind, title: title, message: message, on: db, client: client, logger: logger) }
     }
 }
 
@@ -93,5 +94,5 @@ struct ActivityController: RouteCollection {
         return .noContent
     }
 
-    private func dto(_ item: ActivityNotification) throws -> ActivityDTO { .init(id: try item.requireID(), kind: item.kind, title: item.title, message: item.message, actorID: item.$actor.id, wishlistID: item.$wishlist.id, readAt: item.readAt, createdAt: item.createdAt) }
+    private func dto(_ item: ActivityNotification) throws -> ActivityDTO { .init(id: try item.requireID(), kind: item.kind, title: item.title, message: item.message, actorID: item.$actor.id, wishlistID: item.$wishlist.id, itemID: item.itemID, readAt: item.readAt, createdAt: item.createdAt) }
 }

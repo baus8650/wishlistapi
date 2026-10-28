@@ -61,7 +61,7 @@ enum SaleNotificationService {
         for target in try notificationTargets(for: lists, actorID: actorID) {
             // Self-directed alerts must not be suppressed as the actor's own activity.
             try await ActivityService.create(userID: target.userID, actorID: target.userID == actorID ? nil : actorID,
-                wishlistID: target.wishlistID, kind: "wishlist_updated", title: title,
+                wishlistID: target.wishlistID, itemID: try item.requireID(), kind: "wishlist_updated", title: title,
                 message: "\(message) in “\(target.wishlistTitle)”. Tap to view the item.", on: db, client: client, logger: logger)
         }
     }

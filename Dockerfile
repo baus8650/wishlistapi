@@ -17,6 +17,7 @@ WORKDIR /build
 # as long as your Package.swift/Package.resolved
 # files do not change.
 COPY ./Package.* ./
+COPY ./Vendor ./Vendor
 RUN swift package resolve \
         $([ -f ./Package.resolved ] && echo "--force-resolved-versions" || true)
 
