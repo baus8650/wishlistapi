@@ -54,4 +54,14 @@ struct SaleNotificationDeduplicationTests {
         #expect(targets.count == 2)
         #expect(Set(targets.map(\.userID)) == [owner, recipient])
     }
+    @Test("Joint list sales reach planners even with the legacy Gifts for me purpose")
+    func jointPlanningAudience() throws {
+        let owner = UUID(), coOwner = UUID(), recipient = UUID()
+        let wishlist = list(owner: owner)
+        let targets = try SaleNotificationService.notificationTargets(for: [
+            .init(wishlist: wishlist, recipientIDs: [recipient], collaboratorIDs: [coOwner])
+        ], actorID: nil)
+        #expect(Set(targets.map(\.userID)) == [owner, coOwner])
+    }
+
 }

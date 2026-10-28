@@ -28,7 +28,7 @@ enum MentionService {
     }
 
     /// Returns account IDs that can be mentioned for this wishlist. The
-    /// primary owner is intentionally excluded from the result.
+    /// gift recipient is excluded on Gifts for me lists; joint planners are included.
     static func eligibleUserIDs(
         for wishlistID: UUID,
         on db: any Database
@@ -55,7 +55,11 @@ enum MentionService {
             eligibleIDs.formUnion(viewerIDs)
         }
 
-        eligibleIDs.remove(ownerID)
+        if WishlistPermissionService.giftsAreForOthers(purpose: wishlist.purpose, isCollaborative: !collaboratorIDs.isEmpty) {
+            eligibleIDs.insert(ownerID)
+        } else {
+            eligibleIDs.remove(ownerID)
+        }
         let owner = try await wishlist.$owner.get(on: db)
         var filtered = Set<UUID>()
         for userID in eligibleIDs {
@@ -165,8 +169,14 @@ enum MentionService {
         guard !mentionedUsers.isEmpty else { return }
 
         let userIDs = Set(mentionedUsers.compactMap(\.id))
-        let ownerID = try await Wishlist.find(wishlistID, on: db)?.$owner.id
-        let excludedIDs = Set([actorID, ownerID].compactMap { $0 })
+        let wishlist = try await Wishlist.find(wishlistID, on: db)
+        let hiddenOwnerID: UUID?
+        if let wishlist, try await !WishlistPermissionService.giftsAreForOthers(wishlist: wishlist, on: db) {
+            hiddenOwnerID = wishlist.$owner.id
+        } else {
+            hiddenOwnerID = nil
+        }
+        let excludedIDs = Set([actorID, hiddenOwnerID].compactMap { $0 })
         let eligibleIDs: Set<UUID>
         if let eligibleUserIDs {
             eligibleIDs = userIDs.intersection(eligibleUserIDs).subtracting(excludedIDs)

@@ -155,6 +155,9 @@ struct WishlistDiscussionController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userID, on: db) else {
             throw Abort(.notFound)
         }
+        guard try await WishlistPermissionService.giftsAreForOthers(wishlist: wishlist, on: db) else {
+            throw Abort(.forbidden, reason: "Gift recipients cannot view private planning activity on a Gifts for me list.")
+        }
         guard !wishlist.matureContentEnabled || viewer.derivedAgeBand == "adult" else {
             throw Abort(.forbidden, reason: "This list is not available to your account.")
         }
@@ -177,7 +180,6 @@ struct WishlistDiscussionController: RouteCollection {
         on db: any Database
     ) async throws -> [SocialUserDTO] {
         let owner = try await wishlist.$owner.get(on: db)
-        let ownerID = try owner.requireID()
         let collaborators = try await WishlistCollaborator.query(on: db)
             .filter(\.$wishlist.$id == wishlist.requireID())
             .with(\.$user)
@@ -185,7 +187,6 @@ struct WishlistDiscussionController: RouteCollection {
             .map(\.user)
         return ([owner] + collaborators).compactMap { user in
             guard let id = user.id,
-                  id != ownerID,
                   id != userID,
                   let username = user.username,
                   !username.isEmpty else { return nil }

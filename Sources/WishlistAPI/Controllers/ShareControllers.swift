@@ -820,16 +820,17 @@ struct RecipientShareController: RouteCollection {
 
     private func ensureDiscussionAccess(wishlist: Wishlist, viewer: WishlistViewer, req: Request) async throws {
         guard let userID = viewer.$user.id else { return }
+        if try await WishlistPermissionService.giftsAreForOthers(wishlist: wishlist, on: req.db) { return }
         let wishlistID = try wishlist.requireID()
         if wishlist.$owner.id == userID {
-            throw Abort(.forbidden, reason: "Wishlist owners cannot view the private gift-planning discussion.")
+            throw Abort(.forbidden, reason: "Gift recipients cannot view private planning activity on a Gifts for me list.")
         }
         let isCollaborator = try await WishlistCollaborator.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistID)
             .filter(\.$user.$id == userID)
             .first() != nil
         if isCollaborator {
-            throw Abort(.forbidden, reason: "Wishlist owners cannot view the private gift-planning discussion.")
+            throw Abort(.forbidden, reason: "Gift recipients cannot view private planning activity on a Gifts for me list.")
         }
     }
 }

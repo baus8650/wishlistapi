@@ -2,6 +2,18 @@ import Fluent
 import Vapor
 
 enum WishlistPermissionService {
+    // Legacy stored values describe the buyer, not the gift recipient.
+    static func giftsAreForOthers(purpose: String, isCollaborative: Bool) -> Bool {
+        isCollaborative || purpose == "for_myself"
+    }
+
+    static func giftsAreForOthers(wishlist: Wishlist, on db: any Database) async throws -> Bool {
+        if giftsAreForOthers(purpose: wishlist.purpose, isCollaborative: false) { return true }
+        return try await WishlistCollaborator.query(on: db)
+            .filter(\.$wishlist.$id == wishlist.requireID())
+            .first() != nil
+    }
+
     static func canEdit(wishlistID: UUID, userID: UUID, on db: any Database) async throws -> Bool {
         guard let wishlist = try await Wishlist.find(wishlistID, on: db),
               let user = try await User.find(userID, on: db) else { return false }

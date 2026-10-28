@@ -1,25 +1,58 @@
 @testable import WishlistAPI
+import Fluent
 import Foundation
 import Testing
 import Vapor
 
-@Suite("Private recipient sales")
+@Suite("Private recipient sales", .serialized)
 struct RecipientSaleTests {
-    @Test("Owners cannot enter recipient APIs using a linked viewer")
-    func ownerCannotReadRecipientSales() async throws {
+    @Test("Gift recipients stay outside planning; owners of joint and curated lists can participate")
+    func planningAccess() {
+        #expect(!WishlistPermissionService.giftsAreForOthers(purpose: "for_others", isCollaborative: false))
+        #expect(WishlistPermissionService.giftsAreForOthers(purpose: "for_others", isCollaborative: true))
+        #expect(WishlistPermissionService.giftsAreForOthers(purpose: "for_myself", isCollaborative: false))
+        #expect(WishlistPermissionService.giftsAreForOthers(purpose: "for_myself", isCollaborative: true))
+    }
+
+    @Test("Joint owners can read planning through both APIs; Gifts for me owners remain excluded")
+    func jointOwnerPlanningAccess() async throws {
         let app = try await Application.make(.testing)
-        let ownerID = UUID()
-        let wishlistID = UUID()
-        let wishlist = Wishlist(ownerUserId: ownerID, title: "Private gifts")
-        wishlist.id = wishlistID
-        let viewer = WishlistViewer(id: UUID(), wishlistId: wishlistID, userId: ownerID)
-        let request = Request(application: app, on: app.eventLoopGroup.next())
         do {
-            _ = try await RecipientShareController().listItemsWithState(req: request, wishlist: wishlist, viewer: viewer)
-            Issue.record("Owner gained access to recipient data")
-        } catch let error as Abort {
-            #expect(error.status == .forbidden)
+            try await configure(app)
+            try await app.autoMigrate()
+            let owner = User(email: "planning-owner-\(UUID())@example.com", passwordHash: "unused")
+            let coOwner = User(email: "planning-coowner-\(UUID())@example.com", passwordHash: "unused")
+            try await owner.save(on: app.db)
+            try await coOwner.save(on: app.db)
+            let wishlist = Wishlist(ownerUserId: try owner.requireID(), title: "Joint planning")
+            try await wishlist.save(on: app.db)
+            let wishlistID = try wishlist.requireID()
+            let ownerViewer = WishlistViewer(wishlistId: wishlistID, userId: try owner.requireID())
+            try await ownerViewer.save(on: app.db)
+            let req = Request(application: app, on: app.eventLoopGroup.next())
+            req.auth.login(owner)
+            req.parameters.set("wishlistID", to: wishlistID.uuidString)
+            do {
+                _ = try await RecipientShareController().listItemsWithState(req: req, wishlist: wishlist, viewer: ownerViewer)
+                Issue.record("Gift recipient read private planning")
+            } catch let error as Abort { #expect(error.status == .forbidden) }
+            do {
+                _ = try await WishlistDiscussionController().list(req: req)
+                Issue.record("Gift recipient entered owner discussion API")
+            } catch let error as Abort { #expect(error.status == .forbidden) }
+
+            try await WishlistCollaborator(wishlistID: wishlistID, userID: coOwner.requireID()).save(on: app.db)
+            for user in [owner, coOwner] {
+                req.auth.login(user)
+                let viewer = user.id == owner.id ? ownerViewer : WishlistViewer(wishlistId: wishlistID, userId: try user.requireID())
+                let rows = try await RecipientShareController().listItemsWithState(req: req, wishlist: wishlist, viewer: viewer)
+                #expect(rows.isEmpty)
+                let comments = try await WishlistDiscussionController().list(req: req)
+                #expect(comments.isEmpty)
+            }
+            try await app.autoRevert()
         } catch {
+            try? await app.autoRevert()
             try? await app.asyncShutdown()
             throw error
         }

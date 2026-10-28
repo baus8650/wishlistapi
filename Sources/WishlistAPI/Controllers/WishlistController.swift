@@ -432,7 +432,7 @@ struct WishlistController: RouteCollection {
     }
 
     func validatedPurpose(_ purpose: String) throws -> String {
-        guard ["for_myself", "for_others"].contains(purpose) else { throw Abort(.badRequest, reason: "Choose For myself or For others.") }
+        guard ["for_myself", "for_others"].contains(purpose) else { throw Abort(.badRequest, reason: "Choose Gifts for me or Gifts for others.") }
         return purpose
     }
 

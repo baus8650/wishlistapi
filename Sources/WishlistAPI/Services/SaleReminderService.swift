@@ -11,6 +11,7 @@ enum SaleNotificationService {
     struct ListAudience {
         let wishlist: Wishlist
         let recipientIDs: Set<UUID>
+        var collaboratorIDs: Set<UUID> = []
     }
 
     struct NotificationTarget {
@@ -26,8 +27,11 @@ enum SaleNotificationService {
         var targets: [NotificationTarget] = []
         for entry in lists where !entry.wishlist.isArchived {
             let list = entry.wishlist
-            for userID in audience(purpose: list.purpose, ownerID: list.$owner.id,
-                                   recipientIDs: entry.recipientIDs, actorID: actorID) {
+            let planningList = WishlistPermissionService.giftsAreForOthers(purpose: list.purpose, isCollaborative: !entry.collaboratorIDs.isEmpty)
+            let targetsForList = planningList
+                ? Set([list.$owner.id]).union(entry.collaboratorIDs.subtracting(actorID.map { [$0] } ?? []))
+                : audience(purpose: list.purpose, ownerID: list.$owner.id, recipientIDs: entry.recipientIDs, actorID: actorID)
+            for userID in targetsForList {
                 guard notified.insert(userID).inserted else { continue }
                 targets.append(.init(userID: userID, wishlistID: try list.requireID(), wishlistTitle: list.title))
             }
@@ -50,7 +54,9 @@ enum SaleNotificationService {
                 recipientIDs.formUnion(social.filter { $0.viewer.notificationsEnabled }.map(\.$user.id))
                 recipientIDs.formUnion(saved.filter { $0.viewer.notificationsEnabled }.compactMap { $0.viewer.$user.id })
             }
-            lists.append(.init(wishlist: list, recipientIDs: recipientIDs))
+            let collaboratorIDs = Set(try await WishlistCollaborator.query(on: db)
+                .filter(\.$wishlist.$id == listID).all().map(\.$user.id))
+            lists.append(.init(wishlist: list, recipientIDs: recipientIDs, collaboratorIDs: collaboratorIDs))
         }
         for target in try notificationTargets(for: lists, actorID: actorID) {
             // Self-directed alerts must not be suppressed as the actor's own activity.
