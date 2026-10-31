@@ -21,11 +21,13 @@ enum APNSService {
         let actorID: UUID?
         let wishlistID: UUID?
         let itemID: UUID?
+        let feedbackID: UUID?
+        let feedbackAdmin: Bool?
     }
 
     private struct ErrorResponse: Content { let reason: String }
 
-    static func send(userID: UUID, kind: String, title: String, message: String, actorID: UUID?, wishlistID: UUID?, itemID: UUID? = nil, on db: any Database, client: any Client, logger: Logger) async {
+    static func send(userID: UUID, kind: String, title: String, message: String, actorID: UUID?, wishlistID: UUID?, itemID: UUID? = nil, feedbackID: UUID? = nil, feedbackAdmin: Bool? = nil, on db: any Database, client: any Client, logger: Logger) async {
         guard let keyID = Environment.get("APNS_KEY_ID"),
               let teamID = Environment.get("APNS_TEAM_ID"),
               let bundleID = Environment.get("APNS_BUNDLE_ID"),
@@ -55,7 +57,9 @@ enum APNSService {
                 kind: kind,
                 actorID: actorID,
                 wishlistID: wishlistID,
-                itemID: itemID
+                itemID: itemID,
+                feedbackID: feedbackID,
+                feedbackAdmin: feedbackAdmin
             )
             for device in devices {
                 let host = device.environment == "sandbox" ? "api.sandbox.push.apple.com" : "api.push.apple.com"

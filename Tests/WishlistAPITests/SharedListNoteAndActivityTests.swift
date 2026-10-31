@@ -45,6 +45,20 @@ struct SharedListNoteAndActivityTests {
             let all = try await ActivityController().list(req: req)
             #expect(all.count == 2)
             #expect(all.contains { $0.itemID == nil })
+            // Feedback destinations are independent of wishlist and item destinations.
+            let feedbackID = UUID()
+            try await ActivityService.create(userID: recipient.requireID(), actorID: owner.requireID(),
+                feedbackID: feedbackID, feedbackAdmin: false, kind: "feedback_reply",
+                title: "Support replied", message: "A new reply", on: app.db)
+            try await ActivityService.create(userID: recipient.requireID(), actorID: owner.requireID(),
+                feedbackID: feedbackID, feedbackAdmin: true, kind: "feedback_submitted",
+                title: "New feedback", message: "Feedback received", on: app.db)
+            let feedbackActivity = try await ActivityController().list(req: req)
+                .filter { $0.feedbackID == feedbackID }
+            #expect(feedbackActivity.count == 2)
+            #expect(feedbackActivity.contains { $0.feedbackAdmin == true })
+            #expect(feedbackActivity.contains { $0.feedbackAdmin == false })
+            #expect(feedbackActivity.allSatisfy { $0.wishlistID == nil && $0.itemID == nil })
             try await recipient.delete(on: app.db)
             try await owner.delete(on: app.db)
         } catch {

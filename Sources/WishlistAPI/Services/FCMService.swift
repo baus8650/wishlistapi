@@ -28,7 +28,7 @@ enum FCMService {
         let message: Message
     }
 
-    static func send(userID: UUID, kind: String, title: String, message: String, actorID: UUID?, wishlistID: UUID?, itemID: UUID? = nil, on db: any Database, client: any Client, logger: Logger) async {
+    static func send(userID: UUID, kind: String, title: String, message: String, actorID: UUID?, wishlistID: UUID?, itemID: UUID? = nil, feedbackID: UUID? = nil, feedbackAdmin: Bool? = nil, on db: any Database, client: any Client, logger: Logger) async {
         guard let account = serviceAccount() else { logger.debug("Firebase credentials are not configured; Android activity was saved without a push."); return }
         let devices: [PushDevice]
         do { devices = try await PushDevice.query(on: db).filter(\.$user.$id == userID).filter(\.$platform == "android").all() }
@@ -44,7 +44,7 @@ enum FCMService {
             let accessToken = try oauth.content.decode(OAuthResponse.self).accessToken
             for device in devices {
                 var headers = HTTPHeaders(); headers.bearerAuthorization = .init(token: accessToken)
-                let payload = MessageBody(message: .init(token: device.token, notification: .init(title: title, body: message), data: ["kind": kind, "actorID": actorID?.uuidString ?? "", "wishlistID": wishlistID?.uuidString ?? "", "itemID": itemID?.uuidString ?? ""]))
+                let payload = MessageBody(message: .init(token: device.token, notification: .init(title: title, body: message), data: ["feedbackID": feedbackID?.uuidString ?? "", "feedbackAdmin": feedbackAdmin == true ? "true" : "false", "kind": kind, "actorID": actorID?.uuidString ?? "", "wishlistID": wishlistID?.uuidString ?? "", "itemID": itemID?.uuidString ?? ""]))
                 let response = try await client.post(URI(string: "https://fcm.googleapis.com/v1/projects/\(account.projectID)/messages:send"), headers: headers, content: payload).get()
                 if response.status == .notFound || response.status == .badRequest { try? await device.delete(on: db) }
                 else if response.status != .ok { logger.warning("FCM rejected a push with status \(response.status.code).") }

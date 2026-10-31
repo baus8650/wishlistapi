@@ -315,6 +315,8 @@ struct FeedbackController: RouteCollection {
                 try await ActivityService.create(
                     userID: try admin.requireID(),
                     actorID: actorID,
+                    feedbackID: try feedback.requireID(),
+                    feedbackAdmin: true,
                     kind: kind,
                     title: title,
                     message: summary,
@@ -333,6 +335,8 @@ struct FeedbackController: RouteCollection {
             try await ActivityService.create(
                 userID: feedback.$user.id,
                 actorID: actorID,
+                feedbackID: try feedback.requireID(),
+                feedbackAdmin: false,
                 kind: "feedback_reply",
                 title: title,
                 message: message,
