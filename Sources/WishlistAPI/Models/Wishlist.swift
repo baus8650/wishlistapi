@@ -17,6 +17,9 @@ final class Wishlist: Model, Content {
     @Parent(key: "owner_user_id")
     var owner: User
 
+    @OptionalField(key: "currency_code")
+    var currencyCode: String?
+
     @Field(key: "title")
     var title: String
 

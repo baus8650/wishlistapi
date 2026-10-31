@@ -12,6 +12,7 @@ import SQLKit
 struct WishlistController: RouteCollection {
 
     struct Summary: Content {
+        var currencyCode: String? = nil
         let purpose: String
         let id: UUID
         let title: String
@@ -31,6 +32,7 @@ struct WishlistController: RouteCollection {
     }
 
     struct CreateRequest: Content {
+        var currencyCode: String? = nil
         let purpose: String?
         let title: String
         let visibility: String?
@@ -47,6 +49,7 @@ struct WishlistController: RouteCollection {
     }
 
     struct SettingsResponse: Content {
+        var currencyCode: String? = nil
         let purpose: String
         let visibility: String
         let showPurchaserNames: Bool
@@ -65,6 +68,7 @@ struct WishlistController: RouteCollection {
     }
 
     struct UpdateSettingsRequest: Content {
+        var currencyCode: String? = nil
         let purpose: String?
         let visibility: String?
         let showPurchaserNames: Bool?
@@ -142,6 +146,7 @@ struct WishlistController: RouteCollection {
                 throw Abort(.badRequest, reason: "Visibility must be public or private.")
             }
             let wishlist = Wishlist(ownerUserId: userId, title: title)
+            wishlist.currencyCode = try body.currencyCode.flatMap(CurrencyCode.validated)
             wishlist.visibility = visibility
             wishlist.purpose = try validatedPurpose(body.purpose ?? "for_others")
             if let mode = body.collaborationMode {
@@ -265,6 +270,7 @@ struct WishlistController: RouteCollection {
         }
 
         return .init(
+            currencyCode: wishlist.currencyCode,
             purpose: wishlist.purpose,
             visibility: wishlist.visibility,
             showPurchaserNames: wishlist.showPurchaserNames,
@@ -313,6 +319,7 @@ struct WishlistController: RouteCollection {
         ].contains(true)
         if changesProSettings { try ProAccessService.requirePro(user) }
 
+        if let code = body.currencyCode { wishlist.currencyCode = try CurrencyCode.validated(code) }
         if let purpose = body.purpose { wishlist.purpose = try validatedPurpose(purpose) }
         if let v = body.showPurchaserNames { wishlist.showPurchaserNames = v }
         if let v = body.allowMultiplePurchases { wishlist.allowMultiplePurchases = v }
@@ -364,6 +371,7 @@ struct WishlistController: RouteCollection {
         try await ProfileAccessService.revokeIneligibleWishlistAccess(wishlistID: wishlistID, on: req.db)
 
         return .init(
+            currencyCode: wishlist.currencyCode,
             purpose: wishlist.purpose,
             visibility: wishlist.visibility,
             showPurchaserNames: wishlist.showPurchaserNames,
@@ -389,6 +397,7 @@ struct WishlistController: RouteCollection {
         else { throw Abort(.notFound) }
 
         let copy = Wishlist(ownerUserId: userID, title: "\(source.title) Copy", visibility: source.visibility)
+        copy.currencyCode = source.currencyCode
         copy.descriptionText = source.descriptionText
         copy.icon = source.icon
         copy.colorTheme = source.colorTheme
@@ -405,6 +414,7 @@ struct WishlistController: RouteCollection {
             let item = WishlistItem(wishlistId: try copy.requireID(), title: sourceItem.title, url: sourceItem.url,
                                     price: sourceItem.price, ownerNote: sourceItem.ownerNote, quantity: sourceItem.quantity,
                                     itemType: sourceItem.itemType, contributionGoal: sourceItem.contributionGoal)
+            item.currencyCode = sourceItem.currencyCode
             item.$inventoryOwner.id = userID
             item.salePrice = sourceItem.salePrice
             item.saleDiscountPercent = sourceItem.saleDiscountPercent
@@ -437,7 +447,7 @@ struct WishlistController: RouteCollection {
     }
 
     private func summary(_ wishlist: Wishlist, for userID: UUID, isCollaborative: Bool) throws -> Summary {
-        .init(purpose: wishlist.purpose, id: try wishlist.requireID(), title: wishlist.title, visibility: wishlist.visibility,
+        .init(currencyCode: wishlist.currencyCode, purpose: wishlist.purpose, id: try wishlist.requireID(), title: wishlist.title, visibility: wishlist.visibility,
               collaborationMode: wishlist.collaborationMode, isPrimaryOwner: wishlist.$owner.id == userID,
               isCollaborative: isCollaborative, occasionDate: wishlist.occasionDate,
               reminderEnabled: wishlist.reminderEnabled, icon: wishlist.icon,

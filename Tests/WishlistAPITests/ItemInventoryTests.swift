@@ -39,9 +39,10 @@ struct ItemInventoryTests {
             try await legacy.delete(on: app.db)
             let controller = ItemInventoryController()
             let created = try await controller.create(req: request(app, user: owner, body: [
-                "title": "One shared item", "price": 100, "quantity": 2,
+                "title": "One shared item", "price": 100, "quantity": 2, "currencyCode": "COP",
                 "linkedWishlistIDs": [firstID.uuidString, secondID.uuidString]
             ]))
+            #expect(created.currencyCode == "COP")
             let itemID = try created.requireID()
             let initial = try await controller.index(req: request(app, user: owner))
             #expect(initial.count == 1)
@@ -81,10 +82,12 @@ struct ItemInventoryTests {
             #expect(unlisted.count == 1)
             #expect(unlisted[0].wishlistIDs.isEmpty)
             #expect(unlisted[0].item.salePrice == 75)
+            #expect(unlisted[0].item.currencyCode == "COP")
             #expect(unlisted[0].item.$wishlist.id == nil)
             _ = try await controller.update(req: request(app, user: owner, itemID: itemID, body: [
-                "title": "Retained and edited", "price": 100, "quantity": 2, "salePrice": 75, "linkedWishlistIDs": []
+                "title": "Retained and edited", "price": 100, "quantity": 2, "salePrice": 75, "currencyCode": "", "linkedWishlistIDs": []
             ]))
+            #expect(try await WishlistItem.find(itemID, on: app.db)?.currencyCode == nil)
             _ = try await controller.updateLinks(req: request(app, user: owner, itemID: itemID, body: ["wishlistIDs": [secondID.uuidString]]))
             #expect(try await WishlistItemMembership.query(on: app.db).filter(\.$item.$id == itemID).count() == 1)
             // Retained photos remain visible to the inventory owner, but not strangers.
@@ -99,6 +102,7 @@ struct ItemInventoryTests {
                 _ = try await WishlistItemImageController().show(req: request(app, user: stranger, itemID: itemID))
                 Issue.record("Stranger viewed a private retained photo")
             } catch let error as Abort { #expect(error.status == .notFound) }
+            #expect(try await WishlistItem.find(itemID, on: app.db)?.currencyCode == nil)
             _ = try await controller.updateLinks(req: request(app, user: owner, itemID: itemID, body: ["wishlistIDs": [secondID.uuidString]]))
             // Removing the last list through the existing list API also retains it.
             let remove = try request(app, user: owner, itemID: itemID)

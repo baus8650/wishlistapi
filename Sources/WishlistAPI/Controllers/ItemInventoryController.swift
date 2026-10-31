@@ -107,6 +107,7 @@ struct ItemInventoryController: RouteCollection {
                 ? try await ItemDeletionNotificationService.record(item: item, actorID: userID, reason: .init(), permanentlyDeleted: false, on: db)
                 : []
             let previousSale = item.activeSalePrice
+            if let code = body.currencyCode { item.currencyCode = try CurrencyCode.validated(code) }
             item.itemType = type
             try controller.applySale(item, price: body.price, salePrice: body.salePrice,
                 discount: body.saleDiscountPercent, endsAt: body.saleEndsAt)

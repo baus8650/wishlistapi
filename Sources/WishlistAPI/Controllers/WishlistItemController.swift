@@ -11,6 +11,7 @@ import Fluent
 struct WishlistItemController: RouteCollection {
 
     struct CreateRequest: Content {
+        var currencyCode: String? = nil
         let title: String
         let url: String?
         let price: Double?
@@ -26,6 +27,7 @@ struct WishlistItemController: RouteCollection {
     }
 
     struct UpdateRequest: Content {
+        var currencyCode: String? = nil
         let title: String?
         let url: String?
         let price: Double?
@@ -118,6 +120,7 @@ struct WishlistItemController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
 
         let body = try req.content.decode(CreateRequest.self)
+        let currency = try body.currencyCode.map { try CurrencyCode.validated($0) }
         let previousSale = item.activeSalePrice
         let previousOwnerNote = item.ownerNote
         let title = body.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -134,6 +137,7 @@ struct WishlistItemController: RouteCollection {
         if let ownerNote = body.ownerNote { try ContentSafetyService.validate(ownerNote, field: "note") }
         try await validateOwnerNoteMentions(body.ownerNote ?? "", wishlist: wishlist, actorID: userId, on: req.db)
 
+        if let currency { item.currencyCode = currency }
         item.itemType = itemType
         try applySale(item, price: body.price, salePrice: body.salePrice, discount: body.saleDiscountPercent, endsAt: body.saleEndsAt)
         item.title = title
@@ -192,6 +196,7 @@ struct WishlistItemController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
 
         let body = try req.content.decode(CreateRequest.self)
+        let currency = try body.currencyCode.map { try CurrencyCode.validated($0) }
         let title = body.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw Abort(.badRequest, reason: "Title is required.") }
         try ContentSafetyService.validate(title, field: "item title")
@@ -214,6 +219,7 @@ struct WishlistItemController: RouteCollection {
             itemType: itemType,
             contributionGoal: itemType == "cash_fund" ? body.contributionGoal : nil
         )
+        if let currency { item.currencyCode = currency }
         try applySale(item, price: body.price, salePrice: body.salePrice, discount: body.saleDiscountPercent, endsAt: body.saleEndsAt)
         try await validateOwnerNoteMentions(body.ownerNote ?? "", wishlist: wishlist, actorID: userId, on: req.db)
         item.$inventoryOwner.id = wishlist.$owner.id
@@ -285,6 +291,7 @@ struct WishlistItemController: RouteCollection {
               try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userId, on: req.db) else { throw Abort(.notFound) }
 
         let body = try req.content.decode(UpdateRequest.self)
+        if let code = body.currencyCode { item.currencyCode = try CurrencyCode.validated(code) }
         let previousSale = item.activeSalePrice
         let previousOwnerNote = item.ownerNote
         if body.itemType == "cash_fund" || item.itemType == "cash_fund" { try ProAccessService.requirePro(user) }
