@@ -8,6 +8,7 @@ struct ActivityDTO: Content {
     let message: String
     let actorID: UUID?
     let wishlistID: UUID?
+    var reportID: UUID? = nil
     var feedbackID: UUID? = nil
     var feedbackAdmin: Bool? = nil
     var itemID: UUID? = nil
@@ -25,12 +26,12 @@ enum ActivityService {
         return name.isEmpty ? fallback : name
     }
 
-    static func create(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, itemID: UUID? = nil, feedbackID: UUID? = nil, feedbackAdmin: Bool? = nil, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
+    static func create(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, itemID: UUID? = nil, feedbackID: UUID? = nil, feedbackAdmin: Bool? = nil, reportID: UUID? = nil, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
         guard userID != actorID else { return }
-        try await ActivityNotification(userID: userID, actorID: actorID, wishlistID: wishlistID, itemID: itemID, feedbackID: feedbackID, feedbackAdmin: feedbackAdmin, kind: kind, title: title, message: message).save(on: db)
+        try await ActivityNotification(userID: userID, actorID: actorID, wishlistID: wishlistID, itemID: itemID, feedbackID: feedbackID, feedbackAdmin: feedbackAdmin, reportID: reportID, kind: kind, title: title, message: message).save(on: db)
         if let client, let logger {
-            await APNSService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, itemID: itemID, feedbackID: feedbackID, feedbackAdmin: feedbackAdmin, on: db, client: client, logger: logger)
-            await FCMService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, itemID: itemID, feedbackID: feedbackID, feedbackAdmin: feedbackAdmin, on: db, client: client, logger: logger)
+            await APNSService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, itemID: itemID, feedbackID: feedbackID, feedbackAdmin: feedbackAdmin, reportID: reportID, on: db, client: client, logger: logger)
+            await FCMService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, itemID: itemID, feedbackID: feedbackID, feedbackAdmin: feedbackAdmin, reportID: reportID, on: db, client: client, logger: logger)
         }
     }
 
@@ -96,5 +97,5 @@ struct ActivityController: RouteCollection {
         return .noContent
     }
 
-    private func dto(_ item: ActivityNotification) throws -> ActivityDTO { .init(id: try item.requireID(), kind: item.kind, title: item.title, message: item.message, actorID: item.$actor.id, wishlistID: item.$wishlist.id, feedbackID: item.feedbackID, feedbackAdmin: item.feedbackAdmin, itemID: item.itemID, readAt: item.readAt, createdAt: item.createdAt) }
+    private func dto(_ item: ActivityNotification) throws -> ActivityDTO { .init(id: try item.requireID(), kind: item.kind, title: item.title, message: item.message, actorID: item.$actor.id, wishlistID: item.$wishlist.id, reportID: item.reportID, feedbackID: item.feedbackID, feedbackAdmin: item.feedbackAdmin, itemID: item.itemID, readAt: item.readAt, createdAt: item.createdAt) }
 }

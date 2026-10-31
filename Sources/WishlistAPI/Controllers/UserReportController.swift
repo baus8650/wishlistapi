@@ -26,6 +26,7 @@ struct UserReportController: RouteCollection {
         routes.post("reports", "item-notes", ":stateID", use: createItemNoteReport)
         routes.post("public-reports", "share-links", ":shareToken", use: createGuestShareLinkReport)
         routes.get("admin", "reports", use: list)
+        routes.get("admin", "reports", ":reportID", use: show)
         routes.get("admin", "audit", use: audit)
         routes.post("admin", "reports", ":reportID", "remove-content", use: removeContent)
         routes.post("admin", "reports", ":reportID", "dismiss", use: dismiss)
@@ -187,6 +188,18 @@ struct UserReportController: RouteCollection {
             }
     }
 
+    func show(req: Request) async throws -> UserReportDTO {
+        let admin = try AdminAccessService.require(req)
+        guard let id = req.parameters.get("reportID", as: UUID.self),
+              let report = try await UserReport.query(on: req.db).filter(\.$id == id)
+                .with(\.$reporter).with(\.$reported).first() else { throw Abort(.notFound) }
+        await AdminAuditService.record(req, adminID: try admin.requireID(), action: "view_report", targetType: "reports", targetID: id)
+        return .init(id: try report.requireID(), reporterID: report.$reporter.id, reporterEmail: report.reporter?.email,
+                     reportedID: report.$reported.id, reportedEmail: report.reported.email, reason: report.reason,
+                     details: report.details, targetType: report.targetType, targetID: report.targetID,
+                     status: report.status, resolvedAt: report.resolvedAt, createdAt: report.createdAt)
+    }
+
     func audit(req: Request) async throws -> [AuditResponse] {
         _ = try AdminAccessService.require(req)
         return try await AdminAuditEvent.query(on: req.db)
@@ -239,6 +252,7 @@ struct UserReportController: RouteCollection {
             for admin in admins {
                 try await ActivityService.create(
                     userID: try admin.requireID(), actorID: try reporter?.requireID(),
+                    reportID: try report.requireID(),
                     kind: "safety_report_submitted", title: "New safety report",
                     message: "A \(report.targetType ?? "account") was reported for \(report.reason.replacingOccurrences(of: "_", with: " ")).",
                     on: req.db, client: req.client, logger: req.logger

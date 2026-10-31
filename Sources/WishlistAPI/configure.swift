@@ -105,6 +105,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddUserAvatar())
     app.migrations.add(CreateActivityNotifications())
     app.migrations.add(AddFeedbackActivityDestination())
+    app.migrations.add(AddSafetyReportActivityDestination())
     app.migrations.add(AddListAndItemCurrencies())
     app.migrations.add(AddActivityItemID())
     app.migrations.add(AddWishlistVisibility())

@@ -21,13 +21,14 @@ enum APNSService {
         let actorID: UUID?
         let wishlistID: UUID?
         let itemID: UUID?
+        let reportID: UUID?
         let feedbackID: UUID?
         let feedbackAdmin: Bool?
     }
 
     private struct ErrorResponse: Content { let reason: String }
 
-    static func send(userID: UUID, kind: String, title: String, message: String, actorID: UUID?, wishlistID: UUID?, itemID: UUID? = nil, feedbackID: UUID? = nil, feedbackAdmin: Bool? = nil, on db: any Database, client: any Client, logger: Logger) async {
+    static func send(userID: UUID, kind: String, title: String, message: String, actorID: UUID?, wishlistID: UUID?, itemID: UUID? = nil, feedbackID: UUID? = nil, feedbackAdmin: Bool? = nil, reportID: UUID? = nil, on db: any Database, client: any Client, logger: Logger) async {
         guard let keyID = Environment.get("APNS_KEY_ID"),
               let teamID = Environment.get("APNS_TEAM_ID"),
               let bundleID = Environment.get("APNS_BUNDLE_ID"),
@@ -58,6 +59,7 @@ enum APNSService {
                 actorID: actorID,
                 wishlistID: wishlistID,
                 itemID: itemID,
+                reportID: reportID,
                 feedbackID: feedbackID,
                 feedbackAdmin: feedbackAdmin
             )
