@@ -28,6 +28,7 @@ struct WebMetricsController {
     struct CreatedWishlist: Content {
         let id: UUID
         let title: String
+        let itemCount: Int
         let archived: Bool
         let createdAt: Date?
     }
@@ -120,6 +121,12 @@ struct WebMetricsController {
             .sort(\.$createdAt, .descending)
             .limit(100)
             .all()
+        let wishlistIDs = try wishlists.map { try $0.requireID() }
+        let memberships = wishlistIDs.isEmpty ? [] : try await WishlistItemMembership.query(on: req.db)
+            .filter(\.$wishlist.$id ~~ wishlistIDs)
+            .all()
+        let itemCounts = Dictionary(grouping: memberships, by: { $0.$wishlist.id }).mapValues { $0.count }
+
         let sent = try await Friendship.query(on: req.db)
             .filter(\.$requester.$id == accountID)
             .with(\.$recipient)
@@ -138,7 +145,7 @@ struct WebMetricsController {
             email: account.email,
             emailVerified: account.emailVerifiedAt != nil,
             createdWishlists: wishlists.map {
-                try .init(id: $0.requireID(), title: $0.title, archived: $0.isArchived, createdAt: $0.createdAt)
+                try .init(id: $0.requireID(), title: $0.title, itemCount: itemCounts[try $0.requireID(), default: 0], archived: $0.isArchived, createdAt: $0.createdAt)
             },
             sentFriendRequests: try sent.map { relationship in
                 try friendRequest(relationship, otherUser: relationship.recipient)
