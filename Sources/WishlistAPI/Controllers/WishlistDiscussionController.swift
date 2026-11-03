@@ -101,23 +101,8 @@ struct WishlistDiscussionController: RouteCollection {
         )
         try await comment.save(on: req.db)
 
-        let actorName = user.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ??
-            user.username.map { "@\($0)" } ?? "Someone"
-        do {
-            try await MentionService.notifyNewMentions(
-                in: message,
-                wishlistID: wishlistID,
-                actorID: userID,
-                actorName: actorName,
-                context: "in a joint wishlist discussion.",
-                eligibleUserIDs: memberIDs,
-                on: req.db,
-                client: req.client,
-                logger: req.logger
-            )
-        } catch {
-            req.logger.warning("Joint wishlist comment was saved, but mention notifications could not be created: \(error)")
-        }
+        await CommentNotificationService.notify(wishlist: wishlist, actorID: userID,
+            text: message, req: req)
 
         let author = shareName ? (participant.displayName ?? user.displayName) : nil
         return .init(

@@ -59,6 +59,38 @@ struct SharedListNoteAndActivityTests {
             #expect(feedbackActivity.contains { $0.feedbackAdmin == true })
             #expect(feedbackActivity.contains { $0.feedbackAdmin == false })
             #expect(feedbackActivity.allSatisfy { $0.wishlistID == nil && $0.itemID == nil })
+            // Comments reach opted-in accounts, including link viewers without social access.
+            let targets = try await CommentNotificationService.recipientIDs(
+                wishlist: wishlist, actorID: owner.requireID(), on: app.db)
+            #expect(targets == Set([try recipient.requireID()]))
+            let selfTargets = try await CommentNotificationService.recipientIDs(
+                wishlist: wishlist, actorID: recipient.requireID(), on: app.db)
+            #expect(selfTargets.isEmpty)
+            viewer.notificationsEnabled = false
+            try await viewer.save(on: app.db)
+            let mutedTargets = try await CommentNotificationService.recipientIDs(
+                wishlist: wishlist, actorID: nil, on: app.db)
+            #expect(mutedTargets.isEmpty)
+            viewer.notificationsEnabled = true
+            try await viewer.save(on: app.db)
+            await CommentNotificationService.notify(wishlist: wishlist, actorID: try owner.requireID(),
+                itemID: itemID, text: "Check the size", req: req)
+            await CommentNotificationService.notify(wishlist: wishlist, actorID: try owner.requireID(),
+                itemID: itemID, text: "Check the size", previousText: "Check the size", req: req)
+            await CommentNotificationService.notify(wishlist: wishlist, actorID: nil,
+                text: "A guest commented", req: req)
+            let comments = try await ActivityNotification.query(on: app.db)
+                .filter(\.$user.$id == recipient.requireID()).filter(\.$kind == "wishlist_comment").all()
+            #expect(comments.count == 2)
+            #expect(comments.contains { $0.itemID == itemID })
+            #expect(comments.contains { $0.itemID == nil && $0.$actor.id == nil })
+            owner.role = "admin"
+            try await owner.save(on: app.db)
+            await AccountRegistrationNotificationService.notify(user: recipient, req: req)
+            let registrations = try await ActivityNotification.query(on: app.db)
+                .filter(\.$user.$id == owner.requireID()).filter(\.$kind == "account_created").all()
+            #expect(registrations.count == 1)
+            #expect(registrations.first?.$actor.id == recipient.id)
             try await recipient.delete(on: app.db)
             try await owner.delete(on: app.db)
         } catch {

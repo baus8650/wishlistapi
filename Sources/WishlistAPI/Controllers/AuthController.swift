@@ -254,6 +254,7 @@ struct AuthController: RouteCollection {
             throw error
         }
 
+        await AccountRegistrationNotificationService.notify(user: user, req: req)
         return EmailVerificationPendingResponse(email: email, verificationRequired: true)
     }
 
@@ -503,6 +504,7 @@ struct AuthController: RouteCollection {
                 user.termsVersion = Self.currentTermsVersion
                 user.ageConfirmedAt = Date()
                 try await user.save(on: req.db)
+                await AccountRegistrationNotificationService.notify(user: user, req: req)
             }
 
             let userID = try user.requireID()
@@ -679,6 +681,7 @@ struct AuthController: RouteCollection {
                 user.ageConfirmedAt = Date()
                 do {
                     try await user.save(on: req.db)
+                    await AccountRegistrationNotificationService.notify(user: user, req: req)
                 } catch {
                     // The unique email constraint arbitrates simultaneous first
                     // sign-ins (including other providers); reuse its winner.

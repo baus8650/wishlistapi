@@ -213,24 +213,8 @@ struct RecipientShareController: RouteCollection {
             shareName: shareName
         )
         try await comment.save(on: req.db)
-        if let actorID = viewer.$user.id {
-          do {
-            let configuredName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let actorName = configuredName?.isEmpty == false ? configuredName! : "Someone"
-            try await MentionService.notifyNewMentions(
-                in: message,
-                wishlistID: try wishlist.requireID(),
-                actorID: actorID,
-                actorName: actorName,
-                context: "in a wishlist comment.",
-                on: req.db,
-                client: req.client,
-                logger: req.logger
-            )
-          } catch {
-            req.logger.warning("Comment was saved, but mention notifications could not be created: \(error)")
-          }
-        }
+        await CommentNotificationService.notify(wishlist: wishlist, actorID: viewer.$user.id,
+            text: message, req: req)
         return .init(
             id: try comment.requireID(),
             message: comment.message,
@@ -546,24 +530,9 @@ struct RecipientShareController: RouteCollection {
             if wishlist.allowNotes, let note = body.note { state.note = note }
             if let shareName = body.shareName { state.shareName = shareName }
             try await state.save(on: req.db)
-            if let note = body.note, let actorID = viewer.$user.id {
-                do {
-                    let configuredName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let actorName = configuredName?.isEmpty == false ? configuredName! : "Someone"
-                    try await MentionService.notifyNewMentions(
-                        in: note,
-                        previousText: previousNote,
-                        wishlistID: wishlistId,
-                        actorID: actorID,
-                        actorName: actorName,
-                        context: "in an item note.",
-                        on: req.db,
-                        client: req.client,
-                        logger: req.logger
-                    )
-                } catch {
-                    req.logger.warning("Item state was saved, but note mention notifications could not be created: \(error)")
-                }
+            if wishlist.allowNotes, let note = body.note {
+                await CommentNotificationService.notify(wishlist: wishlist, actorID: viewer.$user.id,
+                    itemID: itemID, text: note, previousText: previousNote, req: req)
             }
 
             // purchased by anyone (not just this viewer)
@@ -595,23 +564,9 @@ struct RecipientShareController: RouteCollection {
             let newState = ItemViewerState(itemId: itemID, viewerId: viewerId, purchased: purchased, purchasedQuantity: purchasedQuantity, note: wishlist.allowNotes ? body.note : nil, shareName: shareName)
             if var sale = body.recipientSale { sale.reportedAt = Date(); newState.recipientSale = sale }
             try await newState.save(on: req.db)
-            if let note = body.note, let actorID = viewer.$user.id {
-                do {
-                    let configuredName = viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let actorName = configuredName?.isEmpty == false ? configuredName! : "Someone"
-                    try await MentionService.notifyNewMentions(
-                        in: note,
-                        wishlistID: wishlistId,
-                        actorID: actorID,
-                        actorName: actorName,
-                        context: "in an item note.",
-                        on: req.db,
-                        client: req.client,
-                        logger: req.logger
-                    )
-                } catch {
-                    req.logger.warning("Item state was saved, but note mention notifications could not be created: \(error)")
-                }
+            if wishlist.allowNotes, let note = body.note {
+                await CommentNotificationService.notify(wishlist: wishlist, actorID: viewer.$user.id,
+                    itemID: itemID, text: note, previousText: previousNote, req: req)
             }
 
             let notes: [RecipientNote] = {
