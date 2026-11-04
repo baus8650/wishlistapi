@@ -27,7 +27,7 @@ enum SaleNotificationService {
         var targets: [NotificationTarget] = []
         for entry in lists where !entry.wishlist.isArchived {
             let list = entry.wishlist
-            let planningList = WishlistPermissionService.giftsAreForOthers(purpose: list.purpose, isCollaborative: !entry.collaboratorIDs.isEmpty)
+            let planningList = WishlistPermissionService.giftsAreForOthers(purpose: list.purpose, isCollaborative: !entry.collaboratorIDs.isEmpty, collaborationMode: list.collaborationMode)
             let targetsForList = planningList
                 ? Set([list.$owner.id]).union(entry.collaboratorIDs.subtracting(actorID.map { [$0] } ?? []))
                 : audience(purpose: list.purpose, ownerID: list.$owner.id, recipientIDs: entry.recipientIDs, actorID: actorID)

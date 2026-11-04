@@ -9,6 +9,7 @@ struct RecipientSaleTests {
     @Test("Gift recipients stay outside planning; owners of joint and curated lists can participate")
     func planningAccess() {
         #expect(!WishlistPermissionService.giftsAreForOthers(purpose: "for_others", isCollaborative: false))
+        #expect(WishlistPermissionService.giftsAreForOthers(purpose: "for_others", isCollaborative: false, collaborationMode: "gift_planning"))
         #expect(WishlistPermissionService.giftsAreForOthers(purpose: "for_others", isCollaborative: true))
         #expect(WishlistPermissionService.giftsAreForOthers(purpose: "for_myself", isCollaborative: false))
         #expect(WishlistPermissionService.giftsAreForOthers(purpose: "for_myself", isCollaborative: true))
@@ -40,6 +41,27 @@ struct RecipientSaleTests {
                 _ = try await WishlistDiscussionController().list(req: req)
                 Issue.record("Gift recipient entered owner discussion API")
             } catch let error as Abort { #expect(error.status == .forbidden) }
+
+            // Solo planners can claim and undo purchases even with a legacy purpose.
+            wishlist.collaborationMode = "gift_planning"
+            try await wishlist.save(on: app.db)
+            let item = WishlistItem(wishlistId: wishlistID, title: "Solo gift")
+            try await item.save(on: app.db)
+            try await WishlistItemMembership(itemID: item.requireID(), wishlistID: wishlistID).save(on: app.db)
+            req.parameters.set("itemID", to: try item.requireID().uuidString)
+            let planning = GiftPlanningController()
+            #expect(try await planning.listItems(req: req).count == 1)
+            for quantity in [1, 0] {
+                try req.content.encode(RecipientShareController.UpsertStateRequest(
+                    purchased: nil, note: nil, displayName: nil, shareName: nil, purchasedQuantity: quantity
+                ))
+                let updated = try await planning.updateItem(req: req)
+                #expect(updated.purchasedQuantityByMe == quantity)
+            }
+            try await WishlistItemMembership.query(on: app.db).filter(\.$item.$id == item.requireID()).delete()
+            try await item.delete(on: app.db)
+            wishlist.collaborationMode = "our_wishlist"
+            try await wishlist.save(on: app.db)
 
             try await WishlistCollaborator(wishlistID: wishlistID, userID: coOwner.requireID()).save(on: app.db)
             for user in [owner, coOwner] {

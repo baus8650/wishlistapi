@@ -3,12 +3,12 @@ import Vapor
 
 enum WishlistPermissionService {
     // Legacy stored values describe the buyer, not the gift recipient.
-    static func giftsAreForOthers(purpose: String, isCollaborative: Bool) -> Bool {
-        isCollaborative || purpose == "for_myself"
+    static func giftsAreForOthers(purpose: String, isCollaborative: Bool, collaborationMode: String = "our_wishlist") -> Bool {
+        collaborationMode == "gift_planning" || isCollaborative || purpose == "for_myself"
     }
 
     static func giftsAreForOthers(wishlist: Wishlist, on db: any Database) async throws -> Bool {
-        if giftsAreForOthers(purpose: wishlist.purpose, isCollaborative: false) { return true }
+        if giftsAreForOthers(purpose: wishlist.purpose, isCollaborative: false, collaborationMode: wishlist.collaborationMode) { return true }
         return try await WishlistCollaborator.query(on: db)
             .filter(\.$wishlist.$id == wishlist.requireID())
             .first() != nil

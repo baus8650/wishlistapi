@@ -34,15 +34,19 @@ struct GiftPlanningController: RouteCollection {
             throw Abort(.forbidden, reason: "This list is not available to your account.")
         }
 
+        let suppliedName = user.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = suppliedName?.isEmpty == false ? suppliedName : (user.username.map { "@\($0)" } ?? "Hushful user")
         if let viewer = try await WishlistViewer.query(on: req.db)
             .filter(\.$wishlist.$id == wishlistID)
             .filter(\.$user.$id == userID)
             .first() {
+            if viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                viewer.displayName = displayName
+                try await viewer.save(on: req.db)
+            }
             return (wishlist, viewer)
         }
 
-        let suppliedName = user.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayName = suppliedName?.isEmpty == false ? suppliedName : (user.username.map { "@\($0)" } ?? "Hushful user")
         let viewer = WishlistViewer(
             wishlistId: wishlistID,
             viewerTokenHash: Tokens.sha256Hex(try Tokens.randomURLSafeToken()),

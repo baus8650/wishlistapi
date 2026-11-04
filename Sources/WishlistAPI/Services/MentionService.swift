@@ -55,7 +55,7 @@ enum MentionService {
             eligibleIDs.formUnion(viewerIDs)
         }
 
-        if WishlistPermissionService.giftsAreForOthers(purpose: wishlist.purpose, isCollaborative: !collaboratorIDs.isEmpty) {
+        if WishlistPermissionService.giftsAreForOthers(purpose: wishlist.purpose, isCollaborative: !collaboratorIDs.isEmpty, collaborationMode: wishlist.collaborationMode) {
             eligibleIDs.insert(ownerID)
         } else {
             eligibleIDs.remove(ownerID)
