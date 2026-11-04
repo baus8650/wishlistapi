@@ -74,7 +74,7 @@ struct PersonalGiftsController: RouteCollection {
             let forOthers = try await WishlistPermissionService.giftsAreForOthers(wishlist: list, on: req.db)
             if canEdit && !forOthers { continue }
             // A shared planning-list owner is not necessarily the gift recipient.
-            let people = tagsByList[try list.requireID()] ?? (forOthers ? [] : [.init(userID: nil, name: ActivityService.actorName(for: owner, fallback: "Wishlist recipient"))])
+            let people = tagsByList[try list.requireID()] ?? (forOthers ? [] : [.init(userID: owner.id, name: ActivityService.actorName(for: owner, fallback: "Wishlist recipient"))])
             eligibility[try viewer.requireID()] = (canEdit, people)
         }
         var claims: [Claim] = []

@@ -88,6 +88,7 @@ struct PersonalGiftsTests {
             #expect(shared.quantity == 2)
             #expect(shared.currencyCode == "EUR")
             #expect(shared.recipients.map(\.name) == ["Recipient"])
+            #expect(shared.recipients.first?.userID == recipient.id)
             #expect(!shared.canEditList)
             #expect(feed.claims.first { $0.itemID == second.id }?.recipients.map(\.name) == ["Grandma"])
 
