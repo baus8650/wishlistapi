@@ -28,11 +28,21 @@ enum ActivityService {
 
     static func create(userID: UUID, actorID: UUID? = nil, wishlistID: UUID? = nil, itemID: UUID? = nil, feedbackID: UUID? = nil, feedbackAdmin: Bool? = nil, reportID: UUID? = nil, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
         guard userID != actorID else { return }
-        try await ActivityNotification(userID: userID, actorID: actorID, wishlistID: wishlistID, itemID: itemID, feedbackID: feedbackID, feedbackAdmin: feedbackAdmin, reportID: reportID, kind: kind, title: title, message: message).save(on: db)
-        if let client, let logger {
-            await APNSService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, itemID: itemID, feedbackID: feedbackID, feedbackAdmin: feedbackAdmin, reportID: reportID, on: db, client: client, logger: logger)
-            await FCMService.send(userID: userID, kind: kind, title: title, message: message, actorID: actorID, wishlistID: wishlistID, itemID: itemID, feedbackID: feedbackID, feedbackAdmin: feedbackAdmin, reportID: reportID, on: db, client: client, logger: logger)
-        }
+        let notification = ActivityNotification(userID: userID, actorID: actorID, wishlistID: wishlistID, itemID: itemID, feedbackID: feedbackID, feedbackAdmin: feedbackAdmin, reportID: reportID, kind: kind, title: title, message: message)
+        try await notification.save(on: db)
+        if let client, let logger { await sendPush(notification, on: db, client: client, logger: logger) }
+    }
+
+    static func sendPush(_ notification: ActivityNotification, on db: any Database, client: any Client, logger: Logger) async {
+        let userID = notification.$user.id
+        await APNSService.send(userID: userID, kind: notification.kind, title: notification.title, message: notification.message,
+            actorID: notification.$actor.id, wishlistID: notification.$wishlist.id, itemID: notification.itemID,
+            feedbackID: notification.feedbackID, feedbackAdmin: notification.feedbackAdmin, reportID: notification.reportID,
+            on: db, client: client, logger: logger)
+        await FCMService.send(userID: userID, kind: notification.kind, title: notification.title, message: notification.message,
+            actorID: notification.$actor.id, wishlistID: notification.$wishlist.id, itemID: notification.itemID,
+            feedbackID: notification.feedbackID, feedbackAdmin: notification.feedbackAdmin, reportID: notification.reportID,
+            on: db, client: client, logger: logger)
     }
 
     static func notifyRecipients(wishlistID: UUID, itemID: UUID? = nil, actorID: UUID, kind: String, title: String, message: String, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil, excludingUserIDs: Set<UUID> = []) async throws {
