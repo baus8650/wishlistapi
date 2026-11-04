@@ -170,6 +170,7 @@ func routes(_ app: Application) throws {
 
     // Mount wishlists at /wishlists
     try protected.register(collection: ItemInventoryController())
+    try protected.register(collection: PersonalGiftsController())
     let wishlists = protected.grouped("wishlists")
     try wishlists.register(collection: WishlistController())
     try wishlists.register(collection: WishlistDiscussionController())

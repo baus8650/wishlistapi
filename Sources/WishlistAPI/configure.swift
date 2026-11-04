@@ -168,6 +168,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddFeedbackThreadFields())
     app.migrations.add(CreateUserFeedbackReplies())
     app.migrations.add(CreatePlanningMetadata())
+    app.migrations.add(CreatePersonalGifts())
 
     // The first run happens shortly after startup, then once per day. This is
     // intentionally a service rather than a migration so newly abandoned
