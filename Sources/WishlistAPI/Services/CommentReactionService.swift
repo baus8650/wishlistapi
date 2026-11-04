@@ -3,21 +3,20 @@ import SQLKit
 import Vapor
 
 enum CommentReactionService {
-    static let allowed = ["👍", "❤️", "😂", "🎉", "😮", "🙏"]
     struct Update: Content { let emoji: String; let selected: Bool }
 
     static func summaries(_ rows: [CommentReaction], viewerID: UUID) -> [CommentReactionSummary] {
-        allowed.compactMap { emoji in
-            let matches = rows.filter { $0.emoji == emoji }
-            guard !matches.isEmpty else { return nil }
+        let groups = Dictionary(grouping: rows, by: \.emoji)
+        return groups.keys.sorted().map { emoji in
+            let matches = groups[emoji] ?? []
             return .init(emoji: emoji, count: matches.count, isMine: matches.contains { $0.$viewer.id == viewerID })
         }
     }
 
     static func update(req: Request, wishlist: Wishlist, viewer: WishlistViewer, kind: String) async throws -> [CommentReactionSummary] {
         let body = try req.content.decode(Update.self)
-        guard allowed.contains(body.emoji), let id = req.parameters.get("reactionTargetID", as: UUID.self) else {
-            throw Abort(.badRequest, reason: "Choose a supported reaction.")
+        guard ReactionEmoji.isValid(body.emoji), let id = req.parameters.get("reactionTargetID", as: UUID.self) else {
+            throw Abort(.badRequest, reason: "Choose a single emoji for your reaction.")
         }
         let viewerID = try viewer.requireID()
         try await AuthRateLimitService.enforce(req, scope: "comment-reaction:\(viewerID)", limit: 240, window: 3600)

@@ -6,6 +6,19 @@ import PostgresNIO
 
 @Suite("Planning metadata")
 struct PlanningMetadataTests {
+    @Test("Custom emoji reactions appear in summaries and accept emoji sequences")
+    func customEmoji() {
+        let viewer = UUID()
+        let note = UUID()
+        let rows = [CommentReaction(viewerID: viewer, noteID: note, commentID: nil, emoji: "🦦"),
+                    CommentReaction(viewerID: UUID(), noteID: note, commentID: nil, emoji: "👩🏽‍💻")]
+        let result = CommentReactionService.summaries(rows, viewerID: viewer)
+        #expect(result.first { $0.emoji == "🦦" }?.isMine == true)
+        #expect(result.first { $0.emoji == "👩🏽‍💻" }?.count == 1)
+        for emoji in ["🦦", "👩🏽‍💻", "🇺🇸", "1️⃣", "👍🏿", "🏳️‍🌈"] { #expect(ReactionEmoji.isValid(emoji)) }
+        for invalid in ["", "hello", "1", "#", "😀😀", "🏽", "🇺"] { #expect(!ReactionEmoji.isValid(invalid)) }
+    }
+
     @Test("Recipient storage binds as JSONB for typed names, accounts, and empty lists")
     func recipientStorageBinding() throws {
         let name = GiftRecipient(userID: nil, name: "Grandma")
