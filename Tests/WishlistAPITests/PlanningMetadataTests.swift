@@ -1,9 +1,30 @@
 @testable import WishlistAPI
 import Foundation
 import Testing
+@testable import PostgresKit
+import PostgresNIO
 
 @Suite("Planning metadata")
 struct PlanningMetadataTests {
+    @Test("Recipient storage binds as JSONB for typed names, accounts, and empty lists")
+    func recipientStorageBinding() throws {
+        let name = GiftRecipient(userID: nil, name: "Grandma")
+        let account = GiftRecipient(userID: UUID(), name: "A friend")
+        for recipients in [[], [name], [account], [name, account]] {
+            let record = WishlistGiftRecipients(wishlistID: UUID(), recipients: recipients)
+            var bindings = PostgresBindings()
+            try PostgresDataTranslation.encode(value: record.recipientDocument, in: .default, to: &bindings)
+            #expect(bindings.debugDescription.contains("JSONB;"))
+            #expect(!bindings.debugDescription.contains("JSONB[]"))
+            let encoded = try JSONEncoder().encode(record.recipientDocument)
+            let decoded = try JSONDecoder().decode(GiftRecipientDocument.self, from: encoded)
+            #expect(decoded.recipients == recipients)
+            // Previously stored JSON arrays remain readable without a data migration.
+            let legacy = try JSONEncoder().encode(recipients)
+            #expect(try JSONDecoder().decode(GiftRecipientDocument.self, from: legacy).recipients == recipients)
+        }
+    }
+
     @Test("Reactions count each viewer and identify only the current viewer's selection")
     func reactionSummaries() {
         let mine = UUID(), other = UUID(), note = UUID()
