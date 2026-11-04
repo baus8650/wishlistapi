@@ -37,6 +37,8 @@ struct AccountShareController: RouteCollection {
         routes.get(":accountShareID", "items", use: recipient.listItemsWithState)
         routes.put(":accountShareID", "items", ":itemID", "state", use: recipient.upsertState)
         routes.get(":accountShareID", "mention-candidates", use: recipient.listMentionCandidates)
+        routes.put(":accountShareID", "notes", ":reactionTargetID", "reactions", use: recipient.reactToNote)
+        routes.put(":accountShareID", "discussion", ":reactionTargetID", "reactions", use: recipient.reactToComment)
         routes.get(":accountShareID", "discussion", use: recipient.listDiscussion)
         routes.post(":accountShareID", "discussion", use: recipient.createDiscussionComment)
         routes.delete(":accountShareID", "discussion", ":commentID", use: recipient.deleteDiscussionComment)

@@ -12,6 +12,7 @@ import SQLKit
 struct WishlistController: RouteCollection {
 
     struct Summary: Content {
+        var giftRecipients: [GiftRecipient]? = nil
         var currencyCode: String? = nil
         let purpose: String
         let id: UUID
@@ -32,6 +33,7 @@ struct WishlistController: RouteCollection {
     }
 
     struct CreateRequest: Content {
+        var giftRecipients: [GiftRecipient]? = nil
         var currencyCode: String? = nil
         let purpose: String?
         let title: String
@@ -114,13 +116,20 @@ struct WishlistController: RouteCollection {
         let visibleIDs = Array(Set(ownedIDs + collaboratorIDs))
         let collaborativeIDs = Set(try await WishlistCollaborator.query(on: req.db)
             .filter(\.$wishlist.$id ~~ visibleIDs).all().map(\.$wishlist.id))
+        let recipientRecords = try await WishlistGiftRecipients.query(on: req.db)
+            .filter(\.$wishlist.$id ~~ ownedIDs).all()
+        let recipientsByList = Dictionary(uniqueKeysWithValues: recipientRecords.map { ($0.$wishlist.id, $0.recipients) })
         return try await Wishlist.query(on: req.db)
             .filter(\.$id ~~ visibleIDs)
             .sort(\.$position, .ascending)
             .sort(\.$createdAt, .descending)
             .all()
             .filter { !$0.matureContentEnabled || user.derivedAgeBand == "adult" }
-            .map { try summary($0, for: userId, isCollaborative: collaborativeIDs.contains(try $0.requireID())) }
+            .map { list in
+                var result = try summary(list, for: userId, isCollaborative: collaborativeIDs.contains(try list.requireID()))
+                result.giftRecipients = recipientsByList[try list.requireID()]
+                return result
+            }
     }
 
     // POST /wishlists
@@ -164,8 +173,17 @@ struct WishlistController: RouteCollection {
                 item.position += 1
                 try await item.save(on: db)
             }
+            let recipients = try await GiftRecipientsController.validated(body.giftRecipients ?? [], userID: userId, on: db)
+            guard recipients.isEmpty || wishlist.purpose == "for_myself" || wishlist.collaborationMode == "gift_planning" else {
+                throw Abort(.badRequest, reason: "Choose Gifts for others before adding gift recipients.")
+            }
             try await wishlist.save(on: db)
-            return try summary(wishlist, for: userId, isCollaborative: false)
+            if !recipients.isEmpty {
+                try await WishlistGiftRecipients(wishlistID: wishlist.requireID(), recipients: recipients).save(on: db)
+            }
+            var result = try summary(wishlist, for: userId, isCollaborative: false)
+            result.giftRecipients = recipients
+            return result
         }
     }
 

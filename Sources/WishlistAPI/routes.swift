@@ -173,6 +173,7 @@ func routes(_ app: Application) throws {
     let wishlists = protected.grouped("wishlists")
     try wishlists.register(collection: WishlistController())
     try wishlists.register(collection: WishlistDiscussionController())
+    try wishlists.register(collection: GiftRecipientsController())
     try wishlists.register(collection: WishlistAudienceController())
     try wishlists.register(collection: WishlistCollaboratorController())
     try wishlists.register(collection: GiftPlanningController())

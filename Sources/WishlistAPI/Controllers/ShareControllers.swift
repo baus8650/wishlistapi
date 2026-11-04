@@ -85,6 +85,7 @@ struct RecipientShareController: RouteCollection {
     }
 
     struct RecipientNote: Content {
+        var reactions: [CommentReactionSummary] = []
         let stateID: UUID?
         let note: String
         let authorDisplayName: String?
@@ -93,6 +94,7 @@ struct RecipientShareController: RouteCollection {
     }
 
     struct DiscussionCommentResponse: Content {
+        var reactions: [CommentReactionSummary] = []
         let id: UUID
         let message: String
         let authorDisplayName: String?
@@ -132,6 +134,20 @@ struct RecipientShareController: RouteCollection {
         routes.post("shares", ":shareToken", "discussion", use: createDiscussionComment)
         routes.delete("shares", ":shareToken", "discussion", ":commentID", use: deleteDiscussionComment)
         routes.get("shares", ":shareToken", "mention-candidates", use: listMentionCandidates)
+        routes.put("shares", ":shareToken", "notes", ":reactionTargetID", "reactions", use: reactToNote)
+        routes.put("shares", ":shareToken", "discussion", ":reactionTargetID", "reactions", use: reactToComment)
+    }
+
+    func reactToNote(req: Request) async throws -> [CommentReactionSummary] {
+        let (wishlist, viewer) = try await resolveWishlistAndViewer(req: req)
+        try await ensureDiscussionAccess(wishlist: wishlist, viewer: viewer, req: req)
+        return try await CommentReactionService.update(req: req, wishlist: wishlist, viewer: viewer, kind: "note")
+    }
+
+    func reactToComment(req: Request) async throws -> [CommentReactionSummary] {
+        let (wishlist, viewer) = try await resolveWishlistAndViewer(req: req)
+        try await ensureDiscussionAccess(wishlist: wishlist, viewer: viewer, req: req)
+        return try await CommentReactionService.update(req: req, wishlist: wishlist, viewer: viewer, kind: "comment")
     }
 
     func listMentionCandidates(req: Request) async throws -> [SocialUserDTO] {
@@ -161,9 +177,12 @@ struct RecipientShareController: RouteCollection {
             let name = (item.displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return name.isEmpty ? nil : (id, name)
         })
+        let reactions = try await CommentReaction.query(on: req.db)
+            .filter(\.$comment.$id ~~ comments.compactMap(\.id)).all()
         return comments.compactMap { comment in
             guard let id = comment.id else { return nil }
             return .init(
+                reactions: CommentReactionService.summaries(reactions.filter { $0.$comment.id == id }, viewerID: viewerID),
                 id: id,
                 message: comment.message,
                 authorDisplayName: comment.shareName ? names[comment.$viewer.id] : nil,
@@ -338,6 +357,8 @@ struct RecipientShareController: RouteCollection {
             statesByItem[itemId, default: []].append(s)
         }
 
+        let reactions = try await CommentReaction.query(on: req.db)
+            .filter(\.$note.$id ~~ states.compactMap(\.id)).all()
         return items.map { item in
             guard let id = item.id else {
                 return ItemWithRecipientInfo(item: item, purchased: false, purchasedByMe: false, purchasedByOthers: false, purchasedQuantity: 0, purchasedQuantityByMe: 0, purchasedByNames: nil, notes: [])
@@ -368,7 +389,7 @@ struct RecipientShareController: RouteCollection {
                         authorName = nil
                     }
 
-                    return RecipientNote(stateID: s.id, note: raw, authorDisplayName: authorName, updatedAt: s.updatedAt, isMine: s.$viewer.id == viewerId)
+                    return RecipientNote(reactions: CommentReactionService.summaries(reactions.filter { $0.$note.id == s.id }, viewerID: viewerId), stateID: s.id, note: raw, authorDisplayName: authorName, updatedAt: s.updatedAt, isMine: s.$viewer.id == viewerId)
                 }
                 .sorted { (a, b) in
                     // newest first if timestamps exist
@@ -527,7 +548,12 @@ struct RecipientShareController: RouteCollection {
                 state.purchasedQuantity = desiredQuantity
                 state.purchased = desiredQuantity > 0
             }
-            if wishlist.allowNotes, let note = body.note { state.note = note }
+            if wishlist.allowNotes, let note = body.note {
+                state.note = note
+                if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    try await CommentReaction.query(on: req.db).filter(\.$note.$id == state.requireID()).delete()
+                }
+            }
             if let shareName = body.shareName { state.shareName = shareName }
             try await state.save(on: req.db)
             if wishlist.allowNotes, let note = body.note {

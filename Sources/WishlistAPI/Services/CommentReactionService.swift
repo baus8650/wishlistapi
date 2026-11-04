@@ -1,0 +1,51 @@
+import Fluent
+import SQLKit
+import Vapor
+
+enum CommentReactionService {
+    static let allowed = ["👍", "❤️", "😂", "🎉", "😮", "🙏"]
+    struct Update: Content { let emoji: String; let selected: Bool }
+
+    static func summaries(_ rows: [CommentReaction], viewerID: UUID) -> [CommentReactionSummary] {
+        allowed.compactMap { emoji in
+            let matches = rows.filter { $0.emoji == emoji }
+            guard !matches.isEmpty else { return nil }
+            return .init(emoji: emoji, count: matches.count, isMine: matches.contains { $0.$viewer.id == viewerID })
+        }
+    }
+
+    static func update(req: Request, wishlist: Wishlist, viewer: WishlistViewer, kind: String) async throws -> [CommentReactionSummary] {
+        let body = try req.content.decode(Update.self)
+        guard allowed.contains(body.emoji), let id = req.parameters.get("reactionTargetID", as: UUID.self) else {
+            throw Abort(.badRequest, reason: "Choose a supported reaction.")
+        }
+        let viewerID = try viewer.requireID()
+        try await AuthRateLimitService.enforce(req, scope: "comment-reaction:\(viewerID)", limit: 240, window: 3600)
+        if kind == "note" {
+            guard wishlist.allowNotes, let note = try await ItemViewerState.find(id, on: req.db),
+                  let author = try await WishlistViewer.find(note.$viewer.id, on: req.db),
+                  author.$wishlist.id == wishlist.id,
+                  !(note.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  try await WishlistItemMembership.query(on: req.db)
+                    .filter(\.$wishlist.$id == wishlist.requireID()).filter(\.$item.$id == note.$item.id).first() != nil else { throw Abort(.notFound) }
+        } else {
+            guard let comment = try await WishlistDiscussionComment.find(id, on: req.db),
+                  comment.$wishlist.id == wishlist.id else { throw Abort(.notFound) }
+        }
+        return try await req.db.transaction { db in
+            // Serialize a viewer's changes so repeated taps and retries cannot create duplicate reactions.
+            guard let sql = db as? any SQLDatabase else { throw Abort(.internalServerError) }
+            try await sql.raw("SELECT id FROM wishlist_viewers WHERE id = \(bind: viewerID) FOR UPDATE").run()
+            let query = CommentReaction.query(on: db).filter(\.$viewer.$id == viewerID).filter(\.$emoji == body.emoji)
+            if kind == "note" { query.filter(\.$note.$id == id) } else { query.filter(\.$comment.$id == id) }
+            let existing = try await query.first()
+            if body.selected, existing == nil {
+                try await CommentReaction(viewerID: viewerID, noteID: kind == "note" ? id : nil,
+                    commentID: kind == "note" ? nil : id, emoji: body.emoji).save(on: db)
+            } else if !body.selected, let existing { try await existing.delete(on: db) }
+            let all = CommentReaction.query(on: db)
+            if kind == "note" { all.filter(\.$note.$id == id) } else { all.filter(\.$comment.$id == id) }
+            return summaries(try await all.all(), viewerID: viewerID)
+        }
+    }
+}

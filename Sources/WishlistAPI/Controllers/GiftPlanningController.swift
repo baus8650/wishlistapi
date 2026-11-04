@@ -7,8 +7,14 @@ struct GiftPlanningController: RouteCollection {
     private let recipient = RecipientShareController()
 
     func boot(routes: any RoutesBuilder) throws {
+        routes.put(":wishlistID", "notes", ":reactionTargetID", "reactions", use: reactToNote)
         routes.get(":wishlistID", "planning-items", use: listItems)
         routes.put(":wishlistID", "planning-items", ":itemID", "state", use: updateItem)
+    }
+
+    func reactToNote(req: Request) async throws -> [CommentReactionSummary] {
+        let (wishlist, viewer) = try await resolvePlanningViewer(req: req)
+        return try await CommentReactionService.update(req: req, wishlist: wishlist, viewer: viewer, kind: "note")
     }
 
     func listItems(req: Request) async throws -> [RecipientShareController.ItemWithRecipientInfo] {

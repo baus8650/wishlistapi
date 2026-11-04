@@ -3,6 +3,7 @@ import Vapor
 
 struct WishlistDiscussionController: RouteCollection {
     struct DiscussionCommentResponse: Content {
+        var reactions: [CommentReactionSummary] = []
         let id: UUID
         let message: String
         let authorDisplayName: String?
@@ -17,10 +18,17 @@ struct WishlistDiscussionController: RouteCollection {
     }
 
     func boot(routes: any RoutesBuilder) throws {
+        routes.put(":wishlistID", "discussion", ":reactionTargetID", "reactions", use: react)
         routes.get(":wishlistID", "discussion", use: list)
         routes.get(":wishlistID", "discussion", "mention-candidates", use: mentionCandidates)
         routes.post(":wishlistID", "discussion", use: create)
         routes.delete(":wishlistID", "discussion", ":commentID", use: delete)
+    }
+
+    func react(req: Request) async throws -> [CommentReactionSummary] {
+        let userID = try req.auth.require(User.self).requireID()
+        let (wishlist, viewer) = try await authorize(wishlistID: req, userID: userID, on: req.db)
+        return try await CommentReactionService.update(req: req, wishlist: wishlist, viewer: viewer, kind: "comment")
     }
 
     func list(req: Request) async throws -> [DiscussionCommentResponse] {
@@ -46,9 +54,12 @@ struct WishlistDiscussionController: RouteCollection {
         })
         let participantID = try participant.requireID()
 
+        let reactions = try await CommentReaction.query(on: req.db)
+            .filter(\.$comment.$id ~~ comments.compactMap(\.id)).all()
         return comments.compactMap { comment in
             guard let id = comment.id else { return nil }
             return .init(
+                reactions: CommentReactionService.summaries(reactions.filter { $0.$comment.id == id }, viewerID: participantID),
                 id: id,
                 message: comment.message,
                 authorDisplayName: comment.shareName ? names[comment.$viewer.id] : nil,
