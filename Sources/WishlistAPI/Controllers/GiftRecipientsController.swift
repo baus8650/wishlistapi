@@ -38,6 +38,15 @@ struct GiftRecipientsController: RouteCollection {
         for entry in entries {
             var name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
             if let id = entry.userID {
+                let friendship = try await Friendship.query(on: db)
+                    .group(.or) { group in
+                        group.group(.and) { $0.filter(\.$requester.$id == userID).filter(\.$recipient.$id == id) }
+                        group.group(.and) { $0.filter(\.$requester.$id == id).filter(\.$recipient.$id == userID) }
+                    }
+                    .filter(\.$status == "accepted").first()
+                guard friendship != nil else {
+                    throw Abort(.forbidden, reason: "Only friends can be selected as gift recipients. You can enter a name instead.")
+                }
                 guard let user = try await User.find(id, on: db),
                       try await !ProfileAccessService.isBlocked(userID, id, on: db) else { throw Abort(.notFound) }
                 name = user.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank

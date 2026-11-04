@@ -29,6 +29,21 @@ struct PlanningMetadataAccessTests {
                 .init(userID: recipient.requireID(), name: "Selected person"),
                 .init(userID: nil, name: "  Grandma  "), .init(userID: nil, name: "grandma")
             ]))
+            // Neither strangers nor pending requests can be selected as accounts.
+            for pending in [false, true] {
+                if pending {
+                    try await Friendship(requesterID: recipient.requireID(), recipientID: owner.requireID(), status: "pending").save(on: app.db)
+                }
+                do {
+                    _ = try await GiftRecipientsController().update(req: req)
+                    Issue.record("A non-friend was selected as an account recipient")
+                } catch let error as Abort { #expect(error.status == .forbidden) }
+            }
+            // Accepted friendships work in either direction; free-text names still work.
+            let friendship = try #require(try await Friendship.query(on: app.db)
+                .filter(\.$requester.$id == recipient.requireID()).filter(\.$recipient.$id == owner.requireID()).first())
+            friendship.status = "accepted"
+            try await friendship.save(on: app.db)
             let saved = try await GiftRecipientsController().update(req: req)
             #expect(saved.count == 2)
             #expect(saved.last?.name == "Grandma")
