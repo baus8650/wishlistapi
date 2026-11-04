@@ -14,7 +14,7 @@ enum ItemDeletionReason: String, Codable, CaseIterable, Sendable {
         switch self {
         case .notSpecified: "Not specified"
         case .noLongerWanted: "No longer wanted"
-        case .alreadyPurchased: "Already purchased"
+        case .alreadyPurchased: "Already claimed"
         case .replaced: "Replaced with another item"
         case .addedByMistake: "Added by mistake"
         case .other: "Other"

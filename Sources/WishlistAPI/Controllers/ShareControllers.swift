@@ -494,7 +494,7 @@ struct RecipientShareController: RouteCollection {
         }
         if let desiredQuantity {
             guard desiredQuantity >= 0 && desiredQuantity <= item.quantity else {
-                throw Abort(.badRequest, reason: "Purchased quantity must be between 0 and \(item.quantity).")
+                throw Abort(.badRequest, reason: "Claimed quantity must be between 0 and \(item.quantity).")
             }
             let otherStates = try await ItemViewerState.query(on: req.db)
                 .filter(\.$item.$id == itemID)
@@ -518,13 +518,13 @@ struct RecipientShareController: RouteCollection {
                 .first()
 
             if existingOtherPurchase != nil {
-                throw Abort(.conflict, reason: "Item is already marked as purchased.")
+                throw Abort(.conflict, reason: "This item is already claimed.")
             }
         }
         if turningPurchasedOn && (viewer.displayName == nil || viewer.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) {
             let name = (body.displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else {
-                throw Abort(.badRequest, reason: "displayName is required to mark an item as purchased.")
+                throw Abort(.badRequest, reason: "A name is required to claim this item.")
             }
             viewer.displayName = name
             try await viewer.save(on: req.db)

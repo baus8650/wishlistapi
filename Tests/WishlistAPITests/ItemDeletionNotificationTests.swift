@@ -76,7 +76,7 @@ struct ItemDeletionNotificationTests {
             #expect(alerts.first?.$user.id == claimant.id)
             #expect(alerts.first?.kind == "claimed_item_removed")
             #expect(alerts.first?.message.contains("Blue headphones") == true)
-            #expect(alerts.first?.message.contains("Already purchased") == true)
+            #expect(alerts.first?.message.contains("Already claimed") == true)
             #expect(alerts.first?.$wishlist.id == nil)
             // Repeating a DELETE cannot create another alert.
             do {
