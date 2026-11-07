@@ -34,6 +34,7 @@ struct PersonalGiftsController: RouteCollection {
         let wishlistID: UUID
         let wishlistTitle: String
         let viewerID: UUID
+        let lastUpdatedAt: Date?
         let canEditList: Bool
         let recipients: [GiftRecipient]
     }
@@ -86,7 +87,7 @@ struct PersonalGiftsController: RouteCollection {
                 quantity: max(state.purchasedQuantity, state.purchased ? 1 : 0), price: state.item.price,
                 currencyCode: state.item.currencyCode ?? list.currencyCode, url: state.item.url,
                 wishlistID: try list.requireID(), wishlistTitle: list.title, viewerID: try viewer.requireID(),
-                canEditList: access.canEdit, recipients: access.recipients))
+                lastUpdatedAt: state.updatedAt ?? state.createdAt, canEditList: access.canEdit, recipients: access.recipients))
         }
         let purchases = try await PersonalGift.query(on: req.db).filter(\.$user.$id == userID)
             .sort(\.$purchasedAt, .descending).all().map(dto)
