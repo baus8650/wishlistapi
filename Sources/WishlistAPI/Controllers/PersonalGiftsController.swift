@@ -90,13 +90,26 @@ struct PersonalGiftsController: RouteCollection {
             guard let viewer = byViewer[state.$viewer.id], let access = eligibility[state.$viewer.id],
                   linked.contains("\(viewer.$wishlist.id):\(state.$item.id)") else { continue }
             let list = viewer.wishlist
-            claims.append(.init(id: try state.requireID(), itemID: state.$item.id, title: state.item.title,
-                quantity: max(state.purchasedQuantity, state.purchased ? 1 : 0), price: state.claimPrice.map { $0.paidUnitPrice ?? $0.unitPrice } ?? state.item.price,
-                currencyCode: state.claimPrice.map { $0.currencyCode } ?? (state.item.currencyCode ?? list.currencyCode), url: state.item.url,
+            let snapshot = state.claimPrice
+            let price: Double?
+            let currency: String?
+            if let snapshot {
+                price = snapshot.paidUnitPrice ?? snapshot.unitPrice
+                currency = snapshot.currencyCode
+            } else {
+                price = state.item.price
+                currency = state.item.currencyCode ?? list.currencyCode
+            }
+            let claim = Claim(
+                id: try state.requireID(), itemID: state.$item.id, title: state.item.title,
+                quantity: max(state.purchasedQuantity, state.purchased ? 1 : 0),
+                price: price, currencyCode: currency, url: state.item.url,
                 wishlistID: try list.requireID(), wishlistTitle: list.title, viewerID: try viewer.requireID(),
-                lastUpdatedAt: state.updatedAt ?? state.createdAt, claimedAt: state.claimPrice?.claimedAt,
-                savedUnitPrice: state.claimPrice?.unitPrice, paidUnitPrice: state.claimPrice?.paidUnitPrice,
-                hasPriceSnapshot: state.claimPrice != nil, canEditList: access.canEdit, recipients: access.recipients))
+                lastUpdatedAt: state.updatedAt ?? state.createdAt, claimedAt: snapshot?.claimedAt,
+                savedUnitPrice: snapshot?.unitPrice, paidUnitPrice: snapshot?.paidUnitPrice,
+                hasPriceSnapshot: snapshot != nil, canEditList: access.canEdit, recipients: access.recipients
+            )
+            claims.append(claim)
         }
         let purchases = try await PersonalGift.query(on: req.db).filter(\.$user.$id == userID)
             .sort(\.$purchasedAt, .descending).all().map(dto)

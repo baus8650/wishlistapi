@@ -26,9 +26,13 @@ COPY . .
 
 RUN mkdir /staging
 
+# Limit compiler concurrency to keep release builds within the builder's memory budget.
+ARG SWIFT_BUILD_JOBS=2
+
 # Build the application, with optimizations, with static linking, and using jemalloc
 # N.B.: The static version of jemalloc is incompatible with the static Swift runtime.
 RUN swift build -c release \
+        --jobs "$SWIFT_BUILD_JOBS" \
         --product WishlistAPI \
         --static-swift-stdlib \
         -Xlinker -ljemalloc && \
