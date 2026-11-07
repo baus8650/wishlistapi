@@ -358,6 +358,7 @@ struct WishlistItemController: RouteCollection {
                   let current = try await membership(itemID: itemID, wishlistID: wishlistID, on: db),
                   let wishlist = try await Wishlist.find(wishlistID, on: db),
                   try await WishlistPermissionService.canEdit(wishlistID: wishlistID, userID: userID, on: db) else { throw Abort(.notFound) }
+            try await ItemDeletionNotificationService.recordSelfPurchase(item: item, actor: user, fallbackCurrency: wishlist.currencyCode, request: reason, on: db)
             let memberships = try await WishlistItemMembership.query(on: db).filter(\.$item.$id == itemID).all()
             let remaining = memberships.filter { $0.$wishlist.id != wishlistID }
             var deliveries: [ItemDeletionNotificationService.Delivery] = []

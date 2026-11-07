@@ -175,6 +175,8 @@ struct ItemInventoryController: RouteCollection {
             try await ItemDeletionNotificationService.lockItem(itemID, on: db)
             let (item, editable, linked) = try await authorizedItem(req: req, on: db)
             guard linked.isSubset(of: editable) else { throw Abort(.forbidden, reason: "This item also appears on a list you cannot edit. Remove it from your lists instead.") }
+            let actor = try req.auth.require(User.self)
+            try await ItemDeletionNotificationService.recordSelfPurchase(item: item, actor: actor, fallbackCurrency: nil, request: reason, on: db)
             // Detached items were already removed from recipients' lists; don't notify twice.
             let deliveries: [ItemDeletionNotificationService.Delivery]
             if linked.isEmpty { deliveries = [] }

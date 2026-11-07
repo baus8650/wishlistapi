@@ -542,9 +542,23 @@ struct RecipientShareController: RouteCollection {
             )
         }
 
+        var newClaimPrice: ItemViewerState.ClaimPrice?
+        if (desiredQuantity ?? 0) > 0 && !(state?.purchased ?? false) && (state?.purchasedQuantity ?? 0) == 0 {
+            let saleStates = try await ItemViewerState.query(on: req.db).filter(\.$item.$id == itemID).with(\.$viewer).all()
+            let displayedSale = saleStates.filter {
+                guard $0.viewer.$wishlist.id == wishlistId, let sale = $0.recipientSale else { return false }
+                return (sale.salePrice != nil || sale.saleDiscountPercent != nil) && (sale.saleEndsAt.map { $0 > Date() } ?? true)
+            }.sorted { ($0.recipientSale?.reportedAt ?? .distantPast) > ($1.recipientSale?.reportedAt ?? .distantPast) }.first?.recipientSale
+            newClaimPrice = claimPriceSnapshot(item: item, list: wishlist, sale: body.recipientSale ?? displayedSale)
+        }
+
         if let state {
             if var sale = body.recipientSale { sale.reportedAt = Date(); state.recipientSale = sale }
             if let desiredQuantity {
+                if desiredQuantity == 0 { state.claimPrice = nil }
+                else if !state.purchased && state.purchasedQuantity == 0 {
+                    state.claimPrice = newClaimPrice
+                }
                 state.purchasedQuantity = desiredQuantity
                 state.purchased = desiredQuantity > 0
             }
@@ -589,6 +603,7 @@ struct RecipientShareController: RouteCollection {
             if let note = body.note, wishlist.allowNotes { try ContentSafetyService.validate(note, field: "note") }
             let newState = ItemViewerState(itemId: itemID, viewerId: viewerId, purchased: purchased, purchasedQuantity: purchasedQuantity, note: wishlist.allowNotes ? body.note : nil, shareName: shareName)
             if var sale = body.recipientSale { sale.reportedAt = Date(); newState.recipientSale = sale }
+            if purchased { newState.claimPrice = newClaimPrice }
             try await newState.save(on: req.db)
             if wishlist.allowNotes, let note = body.note {
                 await CommentNotificationService.notify(wishlist: wishlist, actorID: viewer.$user.id,
@@ -615,6 +630,17 @@ struct RecipientShareController: RouteCollection {
 
             return ItemWithRecipientInfo(item: item, purchased: purchasedByAnyone, purchasedByMe: purchased, purchasedByOthers: totalPurchasedQuantity > purchasedQuantity, purchasedQuantity: totalPurchasedQuantity, purchasedQuantityByMe: purchasedQuantity, purchasedByNames: purchasedByNames, recipientSale: newState.recipientSale, notes: notes)
         }
+    }
+
+    func claimPriceSnapshot(item: WishlistItem, list: Wishlist, sale: RecipientSale?) -> ItemViewerState.ClaimPrice {
+        var price = item.activeSalePrice ?? item.price
+        if let sale, sale.saleEndsAt.map({ $0 > Date() }) ?? true {
+            if let salePrice = sale.salePrice { price = salePrice }
+            else if let discount = sale.saleDiscountPercent, let original = item.price {
+                price = (original * (1 - discount / 100) * 100).rounded() / 100
+            }
+        }
+        return .init(unitPrice: price, currencyCode: item.currencyCode ?? list.currencyCode, claimedAt: Date(), paidUnitPrice: nil)
     }
 
     func validateRecipientSale(_ sale: RecipientSale, item: WishlistItem, wishlistID: UUID) throws {

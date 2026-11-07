@@ -35,6 +35,16 @@ final class ItemViewerState: Model, Content {
     @OptionalField(key: "recipient_sale")
     var recipientSale: RecipientShareController.RecipientSale?
 
+    struct ClaimPrice: Content {
+        let unitPrice: Double?
+        let currencyCode: String?
+        let claimedAt: Date?
+        var paidUnitPrice: Double?
+    }
+
+    @OptionalField(key: "claim_price")
+    var claimPrice: ClaimPrice?
+
     @Timestamp(key: "created_at", on: .create)
     var createdAt: Date?
 

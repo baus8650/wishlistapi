@@ -7,6 +7,7 @@ final class PersonalGift: Model, @unchecked Sendable {
     @ID(key: .id) var id: UUID?
     @Parent(key: "user_id") var user: User
     @Field(key: "title") var title: String
+    @OptionalField(key: "price_confirmed") var priceConfirmed: Bool?
     @OptionalField(key: "price") var price: Double?
     @OptionalField(key: "currency_code") var currencyCode: String?
     @OptionalField(key: "url") var url: String?

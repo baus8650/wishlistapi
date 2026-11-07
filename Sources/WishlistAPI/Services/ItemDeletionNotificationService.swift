@@ -6,6 +6,7 @@ enum ItemDeletionReason: String, Codable, CaseIterable, Sendable {
     case notSpecified = "not_specified"
     case noLongerWanted = "no_longer_wanted"
     case alreadyPurchased = "already_purchased"
+    case purchasedMyself = "purchased_myself"
     case replaced = "replaced"
     case addedByMistake = "added_by_mistake"
     case other
@@ -15,6 +16,7 @@ enum ItemDeletionReason: String, Codable, CaseIterable, Sendable {
         case .notSpecified: "Not specified"
         case .noLongerWanted: "No longer wanted"
         case .alreadyPurchased: "Already claimed"
+        case .purchasedMyself: "Purchased myself"
         case .replaced: "Replaced with another item"
         case .addedByMistake: "Added by mistake"
         case .other: "Other"
@@ -25,16 +27,24 @@ enum ItemDeletionReason: String, Codable, CaseIterable, Sendable {
 struct ItemDeletionRequest: Content {
     var reason: ItemDeletionReason = .notSpecified
     var note: String? = nil
+    struct SelfPurchase: Content {
+        let recordID: UUID
+        let paidUnitPrice: Double?
+        let quantity: Int
+        let purchasedAt: Date
+    }
+    var selfPurchase: SelfPurchase? = nil
 
     init(reason: ItemDeletionReason = .notSpecified, note: String? = nil) {
         self.reason = reason; self.note = note
     }
 
-    private enum CodingKeys: String, CodingKey { case reason, note }
+    private enum CodingKeys: String, CodingKey { case reason, note, selfPurchase }
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         reason = try values.decodeIfPresent(ItemDeletionReason.self, forKey: .reason) ?? .notSpecified
         note = try values.decodeIfPresent(String.self, forKey: .note)
+        selfPurchase = try values.decodeIfPresent(SelfPurchase.self, forKey: .selfPurchase)
     }
 
     static func read(from req: Request) throws -> Self {
@@ -47,6 +57,13 @@ struct ItemDeletionRequest: Content {
                 throw Abort(.badRequest, reason: "Choose Other for a custom reason and keep it under 240 characters.")
             }
             try ContentSafetyService.validate(note, field: "deletion reason")
+        }
+        if let purchase = body.selfPurchase {
+            guard body.reason == .purchasedMyself, (1...999).contains(purchase.quantity),
+                  purchase.paidUnitPrice.map({ $0.isFinite && $0 >= 0 && $0 <= 1_000_000_000 }) ?? true,
+                  purchase.purchasedAt <= Date().addingTimeInterval(300) else {
+                throw Abort(.badRequest, reason: "Enter a valid purchase price, quantity and date.")
+            }
         }
         return body
     }
@@ -92,6 +109,28 @@ enum ItemDeletionNotificationService {
             deliveries.append(delivery)
         }
         return deliveries
+    }
+
+    static func recordSelfPurchase(item: WishlistItem, actor: User, fallbackCurrency: String?, request: ItemDeletionRequest, on db: any Database) async throws {
+        guard request.reason == .purchasedMyself else { return }
+        let userID = try actor.requireID()
+        let purchase = request.selfPurchase
+        if let id = purchase?.recordID, let existing = try await PersonalGift.find(id, on: db) {
+            guard existing.$user.id == userID else { throw Abort(.conflict) }
+            return
+        }
+        let gift = PersonalGift(userID: userID)
+        gift.id = purchase?.recordID
+        gift.title = item.title
+        gift.priceConfirmed = purchase?.paidUnitPrice != nil
+        gift.price = purchase?.paidUnitPrice ?? item.activeSalePrice ?? item.price
+        gift.currencyCode = item.currencyCode ?? fallbackCurrency
+        gift.url = item.url
+        gift.notes = "Purchased myself"
+        gift.quantity = purchase?.quantity ?? item.quantity
+        gift.purchasedAt = purchase?.purchasedAt ?? Date()
+        gift.recipientDocument = .init(recipients: [.init(userID: userID, name: ActivityService.actorName(for: actor, fallback: "Me"))])
+        try await gift.save(on: db)
     }
 
     // Push is deliberately sent only after the deletion transaction commits.

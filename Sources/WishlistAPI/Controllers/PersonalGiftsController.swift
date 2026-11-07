@@ -11,6 +11,7 @@ struct PersonalGiftsController: RouteCollection {
         let url: String?
         let notes: String?
         let quantity: Int
+        var priceConfirmed: Bool? = nil
         let purchasedAt: Date
     }
     struct SaveRequest: Content {
@@ -21,6 +22,7 @@ struct PersonalGiftsController: RouteCollection {
         let url: String?
         let notes: String?
         let quantity: Int
+        var priceConfirmed: Bool? = nil
         let purchasedAt: Date
     }
     struct Claim: Content {
@@ -35,6 +37,10 @@ struct PersonalGiftsController: RouteCollection {
         let wishlistTitle: String
         let viewerID: UUID
         let lastUpdatedAt: Date?
+        let claimedAt: Date?
+        let savedUnitPrice: Double?
+        let paidUnitPrice: Double?
+        let hasPriceSnapshot: Bool
         let canEditList: Bool
         let recipients: [GiftRecipient]
     }
@@ -43,6 +49,7 @@ struct PersonalGiftsController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         let gifts = routes.grouped("my-gifts")
         gifts.get(use: index)
+        gifts.put("claims", ":claimID", "price", use: updateClaimPrice)
         gifts.post(use: create)
         gifts.put(":giftID", use: update)
         gifts.delete(":giftID", use: delete)
@@ -84,14 +91,44 @@ struct PersonalGiftsController: RouteCollection {
                   linked.contains("\(viewer.$wishlist.id):\(state.$item.id)") else { continue }
             let list = viewer.wishlist
             claims.append(.init(id: try state.requireID(), itemID: state.$item.id, title: state.item.title,
-                quantity: max(state.purchasedQuantity, state.purchased ? 1 : 0), price: state.item.price,
-                currencyCode: state.item.currencyCode ?? list.currencyCode, url: state.item.url,
+                quantity: max(state.purchasedQuantity, state.purchased ? 1 : 0), price: state.claimPrice.map { $0.paidUnitPrice ?? $0.unitPrice } ?? state.item.price,
+                currencyCode: state.claimPrice.map { $0.currencyCode } ?? (state.item.currencyCode ?? list.currencyCode), url: state.item.url,
                 wishlistID: try list.requireID(), wishlistTitle: list.title, viewerID: try viewer.requireID(),
-                lastUpdatedAt: state.updatedAt ?? state.createdAt, canEditList: access.canEdit, recipients: access.recipients))
+                lastUpdatedAt: state.updatedAt ?? state.createdAt, claimedAt: state.claimPrice?.claimedAt,
+                savedUnitPrice: state.claimPrice?.unitPrice, paidUnitPrice: state.claimPrice?.paidUnitPrice,
+                hasPriceSnapshot: state.claimPrice != nil, canEditList: access.canEdit, recipients: access.recipients))
         }
         let purchases = try await PersonalGift.query(on: req.db).filter(\.$user.$id == userID)
             .sort(\.$purchasedAt, .descending).all().map(dto)
         return .init(claims: claims, purchases: purchases)
+    }
+
+    struct ClaimPriceRequest: Content { let paidUnitPrice: Double? }
+
+    func updateClaimPrice(req: Request) async throws -> HTTPStatus {
+        let userID = try req.auth.require(User.self).requireID()
+        let body = try req.content.decode(ClaimPriceRequest.self)
+        if let price = body.paidUnitPrice {
+            guard price.isFinite, price >= 0, price <= 1_000_000_000 else {
+                throw Abort(.badRequest, reason: "Enter a unit price between 0 and 1,000,000,000.")
+            }
+        }
+        guard let id = req.parameters.get("claimID", as: UUID.self),
+              let state = try await ItemViewerState.find(id, on: req.db),
+              state.purchased || state.purchasedQuantity > 0 else { throw Abort(.notFound) }
+        let viewer = try await state.$viewer.get(on: req.db)
+        guard viewer.$user.id == userID else { throw Abort(.notFound) }
+        // Preserve the same visibility rules as the private claims feed.
+        guard try await index(req: req).claims.contains(where: { $0.id == id }) else { throw Abort(.notFound) }
+        if state.claimPrice == nil {
+            let item = try await state.$item.get(on: req.db)
+            let list = try await viewer.$wishlist.get(on: req.db)
+            // Historical sale prices and claim dates cannot be reconstructed.
+            state.claimPrice = .init(unitPrice: item.price, currencyCode: item.currencyCode ?? list.currencyCode, claimedAt: nil, paidUnitPrice: nil)
+        }
+        state.claimPrice?.paidUnitPrice = body.paidUnitPrice
+        try await state.save(on: req.db)
+        return .noContent
     }
 
     func create(req: Request) async throws -> Purchase {
@@ -133,6 +170,7 @@ struct PersonalGiftsController: RouteCollection {
         gift.notes = notes?.isEmpty == false ? notes : nil
         gift.quantity = body.quantity
         gift.purchasedAt = body.purchasedAt
+        gift.priceConfirmed = body.price != nil && body.priceConfirmed == true
         gift.recipientDocument = .init(recipients: recipients)
         try await gift.save(on: req.db)
         return try dto(gift)
@@ -145,6 +183,6 @@ struct PersonalGiftsController: RouteCollection {
     private func dto(_ gift: PersonalGift) throws -> Purchase {
         .init(id: try gift.requireID(), title: gift.title, recipients: gift.recipientDocument.recipients,
               price: gift.price, currencyCode: gift.currencyCode, url: gift.url, notes: gift.notes,
-              quantity: gift.quantity, purchasedAt: gift.purchasedAt)
+              quantity: gift.quantity, priceConfirmed: gift.priceConfirmed, purchasedAt: gift.purchasedAt)
     }
 }
