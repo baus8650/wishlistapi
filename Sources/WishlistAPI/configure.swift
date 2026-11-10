@@ -16,7 +16,8 @@ public func configure(_ app: Application) async throws {
             .contentType,
             .origin,
             .xRequestedWith,
-            HTTPHeaders.Name("X-Viewer-Token")
+            HTTPHeaders.Name("X-Viewer-Token"),
+            HTTPHeaders.Name("X-Swap-Key")
         ]
     )
     app.middleware.use(CORSMiddleware(configuration: corsConfiguration), at: .beginning)
@@ -169,6 +170,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateUserFeedbackReplies())
     app.migrations.add(CreatePlanningMetadata())
     app.migrations.add(CreatePersonalGifts())
+    app.migrations.add(CreateHushfulSwaps())
     app.migrations.add(AddClaimPriceSnapshot())
 
     // The first run happens shortly after startup, then once per day. This is
@@ -176,6 +178,7 @@ public func configure(_ app: Application) async throws {
     // registrations are cleaned up continuously.
     UnverifiedAccountCleanupService.schedule(on: app)
     SaleReminderService.schedule(on: app)
+    SwapReminderService.schedule(on: app)
 
     app.migrations.add(CreateUsageEvents())
     app.migrations.add(AddUsageLocationDetails())

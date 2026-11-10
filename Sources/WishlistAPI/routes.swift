@@ -61,6 +61,7 @@ func routes(_ app: Application) throws {
     let optionallyAuthenticated = v1.grouped(UserTokenAuthenticator())
     try optionallyAuthenticated.register(collection: RecipientShareController())
     try optionallyAuthenticated.register(collection: AvatarController())
+    try optionallyAuthenticated.register(collection: SwapGuestController())
     try optionallyAuthenticated.register(collection: WishlistItemImageController())
 
     // Protected routes (JWT)
@@ -161,6 +162,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: PinController())
     try protected.register(collection: NetworkController())
     try protected.register(collection: RecurringOccasionController())
+    try protected.register(collection: HushfulSwapController())
     protected.get("metrics", "summary", use: metrics.summary)
     protected.get("metrics", "accounts", use: metrics.accounts)
     protected.get("metrics", "accounts", ":accountID", "activity", use: metrics.accountActivity)
