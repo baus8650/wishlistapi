@@ -16,8 +16,7 @@ public func configure(_ app: Application) async throws {
             .contentType,
             .origin,
             .xRequestedWith,
-            HTTPHeaders.Name("X-Viewer-Token"),
-            HTTPHeaders.Name("X-Swap-Key")
+            HTTPHeaders.Name("X-Viewer-Token")
         ]
     )
     app.middleware.use(CORSMiddleware(configuration: corsConfiguration), at: .beginning)

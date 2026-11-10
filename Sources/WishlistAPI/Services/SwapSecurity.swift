@@ -1,4 +1,3 @@
-import Crypto
 import Foundation
 import Vapor
 
@@ -7,14 +6,11 @@ enum SwapSecurity {
         var rng = SystemRandomNumberGenerator()
         return (0..<32).map { _ in String(format: "%02x", UInt8.random(in: .min ... .max, using: &rng)) }.joined()
     }
-    static func hash(_ token: String) -> String {
-        SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
     // Uniform rejection sampling over permutations, with no self assignments.
     // These are directed recipients, not reciprocal pairs. Never expose the map.
     static func draw(_ ids: [UUID]) throws -> [UUID: UUID] {
-        guard ids.count >= 4, Set(ids).count == ids.count else {
-            throw Abort(.badRequest, reason: "At least four different participants are required to protect assignment privacy.")
+        guard ids.count >= 2, Set(ids).count == ids.count else {
+            throw Abort(.badRequest, reason: "Each participant needs someone else to gift to. Invite another person before drawing.")
         }
         var recipients = ids.shuffled()
         while zip(ids, recipients).contains(where: { $0 == $1 }) { recipients.shuffle() }

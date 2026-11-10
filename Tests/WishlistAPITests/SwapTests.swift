@@ -6,7 +6,7 @@ import Vapor
 @Suite("Hushful Swap privacy and draws")
 struct SwapTests {
     @Test func drawsAreDirectedPermutationsWithoutSelfAssignments() throws {
-        for count in [4, 5, 12, 100] {
+        for count in [2, 3, 4, 5, 12, 100] {
             let ids = (0..<count).map { _ in UUID() }
             for _ in 0..<100 {
                 let draw = try SwapSecurity.draw(ids)
@@ -20,14 +20,15 @@ struct SwapTests {
         let draw = try SwapSecurity.draw(ids)
         #expect(ids.contains { draw[draw[$0]!] != $0 })
     }
-    @Test func rejectsSmallAndDuplicateRosters() {
-        #expect(throws: Abort.self) { try SwapSecurity.draw([UUID(), UUID(), UUID()]) }
+    @Test func rejectsImpossibleAndDuplicateRosters() {
+        #expect(throws: Abort.self) { try SwapSecurity.draw([]) }
+        #expect(throws: Abort.self) { try SwapSecurity.draw([UUID()]) }
         let id = UUID()
         #expect(throws: Abort.self) { try SwapSecurity.draw([id, id, UUID(), UUID()]) }
     }
     @Test func organizerAndMembersOnlyReceiveTheirOwnRecipient() throws {
         let owner = UUID()
-        var members = (0..<5).map { SwapMember(userID: $0 == 0 ? owner : UUID(), name: "Person \($0)", status: "accepted", guestHash: "secret-\($0)") }
+        var members = (0..<5).map { SwapMember(userID: $0 == 0 ? owner : UUID(), name: "Person \($0)", status: "accepted") }
         for i in members.indices {
             members[i].recipientID = members[(i + 1) % members.count].id
             members[i].wishes = [.init(title: "Wish \(i)")]
@@ -67,11 +68,9 @@ struct SwapTests {
         #expect(throws: Abort.self) { try HushfulSwapController.cleanWishes([.init(title: "   ")]) }
         #expect(try HushfulSwapController.cleanWishes([.init(title: " Gift ", url: "https://example.com")]).first?.title == "Gift")
     }
-    @Test func credentialsAreIndependentAndHashed() {
+    @Test func invitationTokensAreUnpredictableAndDistinct() {
         let a = SwapSecurity.token(), b = SwapSecurity.token()
         #expect(a.count == 64 && b.count == 64)
         #expect(a != b)
-        #expect(SwapSecurity.hash(a) != a)
-        #expect(SwapSecurity.hash(a) != SwapSecurity.hash(b))
     }
 }

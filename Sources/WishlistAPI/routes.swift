@@ -61,7 +61,7 @@ func routes(_ app: Application) throws {
     let optionallyAuthenticated = v1.grouped(UserTokenAuthenticator())
     try optionallyAuthenticated.register(collection: RecipientShareController())
     try optionallyAuthenticated.register(collection: AvatarController())
-    try optionallyAuthenticated.register(collection: SwapGuestController())
+    try optionallyAuthenticated.register(collection: SwapInvitationController())
     try optionallyAuthenticated.register(collection: WishlistItemImageController())
 
     // Protected routes (JWT)

@@ -26,7 +26,6 @@ struct SwapMember: Codable, Sendable {
     var userID: UUID?
     var name: String
     var status: String = "pending"
-    var guestHash: String?
     var recipientID: UUID?
     var wishes: [SwapWish] = []
     var lastReminder: Date?

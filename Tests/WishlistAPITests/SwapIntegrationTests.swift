@@ -7,7 +7,7 @@ import VaporTesting
 
 @Suite("Hushful Swap integration", .serialized)
 struct SwapIntegrationTests {
-    @Test func invitationsGuestsDrawPrivacyAndLockedRoster() async throws {
+    @Test func accountOnlyInvitationsDrawPrivacyAndLockedRoster() async throws {
         let app = try await Application.make(.testing)
         do {
             try await configure(app)
@@ -23,7 +23,8 @@ struct SwapIntegrationTests {
             let controller = HushfulSwapController()
             let req = Request(application: app, on: app.eventLoopGroup.next())
             req.auth.login(owner)
-            let date = "2027-12-20"
+            let dateFormatter = DateFormatter(); dateFormatter.locale = Locale(identifier: "en_US_POSIX"); dateFormatter.timeZone = TimeZone(secondsFromGMT: 0); dateFormatter.dateFormat = "yyyy-MM-dd"
+            let date = dateFormatter.string(from: Date().addingTimeInterval(30 * 86400))
             try req.content.encode(SwapCreate(title: "Our swap", exchangeDate: date, priceLimit: 50, currencyCode: "USD", userIDs: [friend.requireID()]))
             let created = try await controller.create(req: req)
             #expect(created.members.count == 2)
@@ -51,22 +52,24 @@ struct SwapIntegrationTests {
             try req.content.encode(SwapUpdate(action: "reminder"))
             #expect(try await controller.update(req: req).reminderDays == nil)
             let invite = try #require(created.inviteURL?.split(separator: "/").last.map(String.init))
-            let guestReq = Request(application: app, on: app.eventLoopGroup.next())
-            guestReq.parameters.set("invite", to: invite)
-            try guestReq.content.encode(SwapGuestController.Join(name: "Guest one"))
-            let guest = try await SwapGuestController().join(req: guestReq)
-            let key = try #require(guest.guestKey)
-            try guestReq.content.encode(SwapGuestController.Join(name: "Guest two"))
-            let guestTwo = try await SwapGuestController().join(req: guestReq)
-            #expect(guestTwo.guestKey != key)
-            guestReq.parameters.set("swapID", to: created.id.uuidString)
-            // Public invitation links cannot authenticate a participant or reveal assignments.
-            guestReq.headers.replaceOrAdd(name: "X-Swap-Key", value: invite)
-            do { _ = try await controller.detail(req: guestReq); Issue.record("Invite token acted as private credential") }
-            catch let error as Abort { #expect(error.status == .notFound) }
-            guestReq.headers.replaceOrAdd(name: "X-Swap-Key", value: key)
-            try guestReq.content.encode(SwapUpdate(action: "wishes", wishes: [.init(title: "A guest gift")]))
-            #expect(try await controller.update(req: guestReq).wishes.first?.title == "A guest gift")
+            let joinReq = Request(application: app, on: app.eventLoopGroup.next())
+            joinReq.parameters.set("invite", to: invite)
+            do { _ = try await SwapInvitationController().join(req: joinReq); Issue.record("Anonymous user joined swap") }
+            catch let error as Abort { #expect(error.status == .unauthorized) }
+            let rejected = try await app.testing().sendRequest(.POST, "/v1/swap-invites/\(invite)")
+            #expect(rejected.status == .unauthorized)
+            let anonymousPreview = try await app.testing().sendRequest(.GET, "/v1/swap-invites/\(invite)")
+            #expect(anonymousPreview.status == .ok)
+            joinReq.auth.login(users[2])
+            let joined = try await SwapInvitationController().join(req: joinReq)
+            #expect(joined.swap.myStatus == "accepted")
+            let rejoined = try await SwapInvitationController().join(req: joinReq)
+            #expect(rejoined.swap.members.count == 3)
+            joinReq.auth.login(users[3])
+            _ = try await SwapInvitationController().join(req: joinReq)
+            joinReq.parameters.set("swapID", to: created.id.uuidString)
+            try joinReq.content.encode(SwapUpdate(action: "wishes", wishes: [.init(title: "A gift idea")]))
+            #expect(try await controller.update(req: joinReq).wishes.first?.title == "A gift idea")
             req.auth.login(owner)
             try req.content.encode(SwapUpdate(action: "draw"))
             let drawn = try await controller.update(req: req)
@@ -83,18 +86,38 @@ struct SwapIntegrationTests {
             do { _ = try await controller.update(req: req); Issue.record("Organizer changed a drawn roster") }
             catch let error as Abort { #expect(error.status == .forbidden) }
             #expect(try await HushfulSwap.find(created.id, on: app.db)?.state.members.map(\.recipientID) == firstAssignments)
-            let guestView = try await controller.detail(req: guestReq)
-            #expect(guestView.recipient != nil)
-            #expect(guestView.isAdmin == false)
+            let participantView = try await controller.detail(req: joinReq)
+            #expect(participantView.recipient != nil)
+            #expect(participantView.isAdmin == false)
             let json = String(decoding: try JSONEncoder().encode(drawn), as: UTF8.self)
-            #expect(!json.contains(key))
             #expect(!json.contains("recipientID"))
             #expect(!json.contains("guestHash"))
-            // The guest key works over the actual unauthenticated HTTP route too.
-            let response = try await app.testing().sendRequest(.GET, "/v1/guest-swaps/\(created.id)", headers: ["X-Swap-Key": key])
-            #expect(response.status == .ok)
-            let unauthorized = try await app.testing().sendRequest(.GET, "/v1/guest-swaps/\(created.id)")
-            #expect(unauthorized.status == .notFound)
+            let oldGuestRoute = try await app.testing().sendRequest(.GET, "/v1/guest-swaps/\(created.id)", headers: ["X-Swap-Key": invite])
+            #expect(oldGuestRoute.status != .ok)
+            let unauthorized = try await app.testing().sendRequest(.GET, "/v1/swaps/\(created.id)", headers: ["X-Swap-Key": invite])
+            #expect(unauthorized.status == .unauthorized)
+            // Only the organizer can change dates; even after drawing, assignments remain fixed.
+            let laterDate = dateFormatter.string(from: Date().addingTimeInterval(60 * 86400))
+            try joinReq.content.encode(SwapUpdate(action: "date", exchangeDate: laterDate))
+            do { _ = try await controller.update(req: joinReq); Issue.record("Participant changed the date") }
+            catch let error as Abort { #expect(error.status == .forbidden) }
+            #expect(try await controller.detail(req: joinReq).exchangeDate == date)
+            for i in stored.state.members.indices { stored.state.members[i].purchaseReminderSent = true }
+            try await stored.save(on: app.db)
+            try req.content.encode(SwapUpdate(action: "date", exchangeDate: laterDate))
+            let rescheduled = try await controller.update(req: req)
+            #expect(rescheduled.exchangeDate == laterDate)
+            #expect(rescheduled.status == "drawn")
+            let updated = try #require(try await HushfulSwap.find(created.id, on: app.db))
+            #expect(updated.state.members.map(\.recipientID) == firstAssignments)
+            #expect(updated.state.members.allSatisfy { $0.purchaseReminderSent == false })
+            #expect(try await controller.detail(req: joinReq).exchangeDate == laterDate)
+            try req.content.encode(SwapUpdate(action: "date", exchangeDate: "2027-02-30"))
+            do { _ = try await controller.update(req: req); Issue.record("Invalid calendar date was saved") }
+            catch let error as Abort { #expect(error.status == .badRequest) }
+            #expect(try await controller.detail(req: req).exchangeDate == laterDate)
+            // Existing account members can reopen their swap from the invitation after drawing.
+            #expect(try await SwapInvitationController().join(req: joinReq).swap.recipient != nil)
             for user in users { try await user.delete(on: app.db) }
         } catch { try? await app.asyncShutdown(); throw error }
         try await app.asyncShutdown()
@@ -121,7 +144,7 @@ struct SwapIntegrationTests {
             #expect(try await WishlistViewer.query(on: app.db).filter(\.$wishlist.$id == list.requireID()).count() == 0)
             #expect(try await Wishlist.find(list.requireID(), on: app.db)?.visibility == "private")
             list.matureContentEnabled = true; try await list.save(on: app.db)
-            do { _ = try await HushfulSwapController().update(req: req); Issue.record("Mature list was shared with unverified guests") }
+            do { _ = try await HushfulSwapController().update(req: req); Issue.record("Mature list was copied into a swap") }
             catch let error as Abort { #expect(error.status == .badRequest) }
             try await owner.delete(on: app.db)
         } catch { try? await app.asyncShutdown(); throw error }

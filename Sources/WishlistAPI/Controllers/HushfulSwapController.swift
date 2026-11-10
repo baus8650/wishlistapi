@@ -15,6 +15,7 @@ struct SwapUpdate: Content {
     var wishes: [SwapWish]?
     var wishlistID: UUID?
     var reminderDays: Int?
+    var exchangeDate: String?
 }
 
 struct HushfulSwapController: RouteCollection {
@@ -112,6 +113,23 @@ struct HushfulSwapController: RouteCollection {
                 guard swap.state.members[i].userID != nil, swap.state.members[i].status == "accepted" else { throw Abort(.badRequest, reason: "Purchase push reminders require a Hushful account.") }
                 if let days = body.reminderDays { guard (0...365).contains(days) else { throw Abort(.badRequest, reason: "Choose 0–365 days before the exchange.") } }
                 swap.state.members[i].reminderDays = body.reminderDays
+            case "date":
+                guard admin else { throw Abort(.forbidden, reason: "Only the organizer can change the exchange date.") }
+                guard let value = body.exchangeDate, let date = SwapReminderService.date(value),
+                      date > Date(), date < Date().addingTimeInterval(366 * 86400 * 3) else {
+                    throw Abort(.badRequest, reason: "Choose a future exchange date within three years.")
+                }
+                if value != swap.state.exchangeDate {
+                    swap.state.exchangeDate = value
+                    for j in swap.state.members.indices {
+                        swap.state.members[j].purchaseReminderSent = false
+                        if let userID = swap.state.members[j].userID, userID != swap.$owner.id {
+                            let notification = ActivityNotification(userID: userID, actorID: swap.$owner.id, kind: "swap_date_changed", title: "Exchange date updated", message: "Your Hushful Swap exchange is now on \(value). Open My Lists for details.")
+                            try await notification.save(on: db)
+                            notifications.append(notification)
+                        }
+                    }
+                }
             case "remove":
                 guard admin, draft, let memberID = body.memberID, memberID != swap.state.members[i].id else { throw Abort(.forbidden) }
                 swap.state.members.removeAll { $0.id == memberID }
@@ -121,7 +139,8 @@ struct HushfulSwapController: RouteCollection {
                     throw Abort(.conflict, reason: "Everyone must accept before you draw. Remove declined invitations first.")
                 }
                 for member in swap.state.members {
-                    if let userID = member.userID, try await User.find(userID, on: db) == nil {
+                    guard let userID = member.userID else { throw Abort(.conflict, reason: "Every participant needs a Hushful account. Remove account-free participants before drawing.") }
+                    if try await User.find(userID, on: db) == nil {
                         throw Abort(.conflict, reason: "A participant deleted their account. Remove them before drawing.")
                     }
                 }
@@ -185,25 +204,18 @@ enum SwapAccess {
             try await sql.raw("SELECT id FROM hushful_swaps WHERE id = \(bind: id) FOR UPDATE").run()
         }
         guard let swap = try await HushfulSwap.find(id, on: db) else { throw Abort(.notFound) }
-        let userID = req.auth.get(User.self)?.id
-        let guestHash = req.headers.first(name: "X-Swap-Key").map(SwapSecurity.hash)
-        guard let i = swap.state.members.firstIndex(where: {
-            (userID != nil && $0.userID == userID) || (guestHash != nil && $0.guestHash == guestHash)
-        }) else { throw Abort(.notFound) }
+        let userID = try req.auth.require(User.self).requireID()
+        guard let i = swap.state.members.firstIndex(where: { $0.userID == userID }) else { throw Abort(.notFound) }
         return (swap, i)
     }
 }
 
-struct SwapGuestController: RouteCollection {
+struct SwapInvitationController: RouteCollection {
     struct Preview: Content { var title: String; var exchangeDate: String; var status: String }
-    struct Join: Content { var name: String }
-    struct Joined: Content { var swap: SwapView; var guestKey: String? }
+    struct Joined: Content { var swap: SwapView }
     func boot(routes: any RoutesBuilder) throws {
         routes.get("swap-invites", ":invite", use: preview)
-        routes.post("swap-invites", ":invite", use: join)
-        // Same handlers with participant-specific guest credentials, never the invitation token.
-        routes.get("guest-swaps", ":swapID", use: HushfulSwapController().detail)
-        routes.post("guest-swaps", ":swapID", use: HushfulSwapController().update)
+        routes.grouped(User.guardMiddleware()).post("swap-invites", ":invite", use: join)
     }
     private func find(_ req: Request, on db: any Database) async throws -> HushfulSwap {
         guard let token = req.parameters.get("invite"), token.count == 64,
@@ -215,26 +227,27 @@ struct SwapGuestController: RouteCollection {
         return .init(title: swap.state.title, exchangeDate: swap.state.exchangeDate, status: swap.state.status)
     }
     func join(req: Request) async throws -> Joined {
-        let body = try req.content.decode(Join.self)
-        let name = body.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name.count <= 80 else { throw Abort(.badRequest) }
-        try ContentSafetyService.validate(name, field: "participant name")
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
         return try await req.db.transaction { db in
             let initial = try await find(req, on: db)
             guard let sql = db as? any SQLDatabase else { throw Abort(.internalServerError) }
             try await sql.raw("SELECT id FROM hushful_swaps WHERE id = \(bind: initial.requireID()) FOR UPDATE").run()
             guard let swap = try await HushfulSwap.find(initial.requireID(), on: db) else { throw Abort(.notFound) }
-            guard swap.state.status == "draft", let date = SwapReminderService.date(swap.state.exchangeDate), date > Date() else { throw Abort(.conflict, reason: "This swap is no longer accepting participants.") }
-            let user = req.auth.get(User.self)
-            if let userID = user?.id, let i = swap.state.members.firstIndex(where: { $0.userID == userID }) {
-                return .init(swap: try SwapSecurity.view(swap, memberIndex: i), guestKey: nil)
+            guard swap.state.status != "cancelled" else { throw Abort(.conflict, reason: "This swap is cancelled.") }
+            if let i = swap.state.members.firstIndex(where: { $0.userID == userID }) {
+                if swap.state.status == "draft" {
+                    swap.state.members[i].status = "accepted"
+                    try await swap.save(on: db)
+                }
+                return .init(swap: try SwapSecurity.view(swap, memberIndex: i))
             }
+            guard swap.state.status == "draft", let date = SwapReminderService.date(swap.state.exchangeDate), date > Date() else { throw Abort(.conflict, reason: "This swap is no longer accepting participants.") }
             guard swap.state.members.count < 100 else { throw Abort(.conflict, reason: "This swap is full.") }
-            if let userID = user?.id { guard try await !ProfileAccessService.isBlocked(swap.$owner.id, userID, on: db) else { throw Abort(.forbidden) } }
-            let key = user == nil ? SwapSecurity.token() : nil
-            swap.state.members.append(.init(userID: user?.id, name: user.map { ActivityService.actorName(for: $0, fallback: name) } ?? name, status: "accepted", guestHash: key.map(SwapSecurity.hash)))
+            guard try await !ProfileAccessService.isBlocked(swap.$owner.id, userID, on: db) else { throw Abort(.forbidden) }
+            swap.state.members.append(.init(userID: userID, name: ActivityService.actorName(for: user, fallback: "Participant"), status: "accepted"))
             try await swap.save(on: db)
-            return .init(swap: try SwapSecurity.view(swap, memberIndex: swap.state.members.count - 1), guestKey: key)
+            return .init(swap: try SwapSecurity.view(swap, memberIndex: swap.state.members.count - 1))
         }
     }
 }
