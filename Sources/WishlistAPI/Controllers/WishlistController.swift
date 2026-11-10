@@ -121,6 +121,7 @@ struct WishlistController: RouteCollection {
         let recipientsByList = Dictionary(uniqueKeysWithValues: recipientRecords.map { ($0.$wishlist.id, $0.recipients) })
         return try await Wishlist.query(on: req.db)
             .filter(\.$id ~~ visibleIDs)
+            .filter(\.$swapID == nil)
             .sort(\.$position, .ascending)
             .sort(\.$createdAt, .descending)
             .all()
@@ -323,6 +324,13 @@ struct WishlistController: RouteCollection {
             .first()
         else { throw Abort(.notFound) }
 
+        if wishlist.swapID != nil {
+            guard body.visibility == nil || body.visibility == "private",
+                  body.purpose == nil || body.purpose == "for_others",
+                  body.matureContentEnabled != true else {
+                throw Abort(.forbidden, reason: "Swap wishlists stay private and are shared only inside their swap.")
+            }
+        }
         let changesProSettings = [
             body.occasionDate != nil,
             body.clearOccasionDate == true,
@@ -464,7 +472,7 @@ struct WishlistController: RouteCollection {
         return purpose
     }
 
-    private func summary(_ wishlist: Wishlist, for userID: UUID, isCollaborative: Bool) throws -> Summary {
+    func summary(_ wishlist: Wishlist, for userID: UUID, isCollaborative: Bool) throws -> Summary {
         .init(currencyCode: wishlist.currencyCode, purpose: wishlist.purpose, id: try wishlist.requireID(), title: wishlist.title, visibility: wishlist.visibility,
               collaborationMode: wishlist.collaborationMode, isPrimaryOwner: wishlist.$owner.id == userID,
               isCollaborative: isCollaborative, occasionDate: wishlist.occasionDate,

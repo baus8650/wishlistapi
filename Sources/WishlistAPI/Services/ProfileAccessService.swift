@@ -36,6 +36,7 @@ enum ProfileAccessService {
     static func canViewWishlist(viewer: User, wishlist: Wishlist, owner: User, on db: any Database) async throws -> Bool {
         guard let viewerID = viewer.id, let ownerID = owner.id else { return false }
         if viewerID == ownerID { return true }
+        guard wishlist.swapID == nil else { return false }
         guard try await !isBlocked(viewerID, ownerID, on: db) else { return false }
         if wishlist.matureContentEnabled || owner.isAgeRestrictedProfile {
             return viewer.derivedAgeBand == "adult"

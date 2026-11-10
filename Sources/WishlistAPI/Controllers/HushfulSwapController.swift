@@ -34,9 +34,14 @@ struct HushfulSwapController: RouteCollection {
         var result: [SwapView] = []
         for row in rows {
             let swapID = try row.decode(column: "id", as: UUID.self)
-            if let swap = try await HushfulSwap.find(swapID, on: req.db), let i = swap.state.members.firstIndex(where: { $0.userID == id }) {
-                result.append(try SwapSecurity.view(swap, memberIndex: i))
+            let view: SwapView? = try await req.db.transaction { db in
+                guard let sql = db as? any SQLDatabase else { throw Abort(.internalServerError) }
+                try await sql.raw("SELECT id FROM hushful_swaps WHERE id = \(bind: swapID) FOR UPDATE").run()
+                guard let swap = try await HushfulSwap.find(swapID, on: db), let i = swap.state.members.firstIndex(where: { $0.userID == id }) else { return nil }
+                try await SwapWishlistService.prepare(swap, on: db)
+                return try await SwapWishlistService.view(swap, memberIndex: i, on: db)
             }
+            if let view { result.append(view) }
         }
         return result
     }
@@ -64,6 +69,7 @@ struct HushfulSwapController: RouteCollection {
         let invitedMembers = Array(members.dropFirst())
         try await req.db.transaction { db in
             try await swap.save(on: db)
+            try await SwapWishlistService.prepare(swap, on: db)
             for member in invitedMembers {
                 if let userID = member.userID {
                     try await ActivityService.create(userID: userID, actorID: id, kind: "swap_invitation", title: "Hushful Swap invitation", message: "You’re invited to \(title). Open My Lists to respond.", on: db)
@@ -77,16 +83,20 @@ struct HushfulSwapController: RouteCollection {
                 await FCMService.send(userID: userID, kind: "swap_invitation", title: "Hushful Swap invitation", message: "Open My Lists to respond to your invitation.", actorID: id, wishlistID: nil, on: req.db, client: req.client, logger: req.logger)
             }
         }
-        return try SwapSecurity.view(swap, memberIndex: 0)
+        return try await SwapWishlistService.view(swap, memberIndex: 0, on: req.db)
     }
     func detail(req: Request) async throws -> SwapView {
-        let (swap, i) = try await SwapAccess.load(req, on: req.db)
-        return try SwapSecurity.view(swap, memberIndex: i)
+        return try await req.db.transaction { db in
+            let (swap, i) = try await SwapAccess.load(req, on: db, lock: true)
+            try await SwapWishlistService.prepare(swap, on: db)
+            return try await SwapWishlistService.view(swap, memberIndex: i, on: db)
+        }
     }
     func update(req: Request) async throws -> SwapView {
         let body = try req.content.decode(SwapUpdate.self)
         let result: (SwapView, [ActivityNotification]) = try await req.db.transaction { db in
             let (swap, i) = try await SwapAccess.load(req, on: db, lock: true)
+            try await SwapWishlistService.prepare(swap, on: db)
             guard swap.state.status != "cancelled" else { throw Abort(.conflict, reason: "This swap is cancelled.") }
             let myID = swap.state.members[i].id
             let admin = swap.state.members[i].userID == swap.$owner.id
@@ -101,14 +111,18 @@ struct HushfulSwapController: RouteCollection {
                 if let wishlistID = body.wishlistID {
                     let user = try req.auth.require(User.self)
                     guard let list = try await Wishlist.find(wishlistID, on: db), list.$owner.id == user.id,
-                          list.purpose == "for_myself", !list.isArchived, !list.matureContentEnabled,
+                          !list.isArchived, !list.matureContentEnabled,
                           !user.isAgeRestrictedProfile,
                           try await WishlistCollaborator.query(on: db).filter(\.$wishlist.$id == wishlistID).count() == 0 else {
                         throw Abort(.badRequest, reason: "Choose a personal, non-mature wishlist owned only by you.")
                     }
-                    let links = try await WishlistItemMembership.query(on: db).filter(\.$wishlist.$id == wishlistID).with(\.$item).all()
-                    swap.state.members[i].wishes = try Self.cleanWishes(links.prefix(100).map { .init(title: $0.item.title, url: $0.item.url, note: $0.item.ownerNote) })
-                } else { swap.state.members[i].wishes = try Self.cleanWishes(body.wishes ?? []) }
+                    let wishes = try await SwapWishlistService.wishes(listID: wishlistID, on: db)
+                    if wishes.contains(where: { $0.itemType == "cash_fund" }) { try ProAccessService.requirePro(user) }
+                    try await SwapWishlistService.replace(wishes, for: swap.state.members[i], on: db)
+                } else {
+                    try await SwapWishlistService.replace(Self.cleanWishes(body.wishes ?? []), for: swap.state.members[i], on: db)
+                }
+                swap.state.members[i].wishes = []
             case "reminder":
                 guard swap.state.members[i].userID != nil, swap.state.members[i].status == "accepted" else { throw Abort(.badRequest, reason: "Purchase push reminders require a Hushful account.") }
                 if let days = body.reminderDays { guard (0...365).contains(days) else { throw Abort(.badRequest, reason: "Choose 0–365 days before the exchange.") } }
@@ -172,9 +186,10 @@ struct HushfulSwapController: RouteCollection {
                 notifications.append(notification)
             default: throw Abort(.badRequest)
             }
+            try await SwapWishlistService.prepare(swap, on: db)
             try await swap.save(on: db)
             let newIndex = swap.state.members.firstIndex { $0.id == myID } ?? i
-            return (try SwapSecurity.view(swap, memberIndex: newIndex), notifications)
+            return (try await SwapWishlistService.view(swap, memberIndex: newIndex, on: db), notifications)
         }
         for notification in result.1 {
             await ActivityService.sendPush(notification, on: req.db, client: req.client, logger: req.logger)
@@ -240,14 +255,16 @@ struct SwapInvitationController: RouteCollection {
                     swap.state.members[i].status = "accepted"
                     try await swap.save(on: db)
                 }
-                return .init(swap: try SwapSecurity.view(swap, memberIndex: i))
+                try await SwapWishlistService.prepare(swap, on: db)
+                return .init(swap: try await SwapWishlistService.view(swap, memberIndex: i, on: db))
             }
             guard swap.state.status == "draft", let date = SwapReminderService.date(swap.state.exchangeDate), date > Date() else { throw Abort(.conflict, reason: "This swap is no longer accepting participants.") }
             guard swap.state.members.count < 100 else { throw Abort(.conflict, reason: "This swap is full.") }
             guard try await !ProfileAccessService.isBlocked(swap.$owner.id, userID, on: db) else { throw Abort(.forbidden) }
             swap.state.members.append(.init(userID: userID, name: ActivityService.actorName(for: user, fallback: "Participant"), status: "accepted"))
             try await swap.save(on: db)
-            return .init(swap: try SwapSecurity.view(swap, memberIndex: swap.state.members.count - 1))
+            try await SwapWishlistService.prepare(swap, on: db)
+            return .init(swap: try await SwapWishlistService.view(swap, memberIndex: swap.state.members.count - 1, on: db))
         }
     }
 }

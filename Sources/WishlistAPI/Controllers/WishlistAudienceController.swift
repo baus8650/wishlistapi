@@ -17,6 +17,7 @@ struct WishlistAudienceController: RouteCollection {
 
     func update(req: Request) async throws -> Audience {
         let ownerID = try req.auth.require(User.self).requireID(), wishlist = try await ownedWishlist(req), wishlistID = try wishlist.requireID()
+        try SwapWishlistService.requireOrdinarySharing(wishlist)
         let body = try req.content.decode(Audience.self)
         let userIDs = Array(Set(body.userIDs)), groupIDs = Array(Set(body.groupIDs))
         let owner = try await wishlist.$owner.get(on: req.db)
@@ -64,6 +65,7 @@ enum AudienceService {
 
     static func sync(wishlistID: UUID, on db: any Database, client: (any Client)? = nil, logger: Logger? = nil) async throws {
         guard let wishlist = try await Wishlist.query(on: db).filter(\.$id == wishlistID).with(\.$owner).first() else { return }
+        guard wishlist.swapID == nil else { return }
         let ownerID = wishlist.$owner.id
         let ownerName = wishlist.owner.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? wishlist.owner.displayName! : "A friend"
         let grants = try await WishlistAudienceGrant.query(on: db).filter(\.$wishlist.$id == wishlistID).all()

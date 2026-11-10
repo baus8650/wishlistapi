@@ -31,6 +31,7 @@ struct WishlistItemImageController: RouteCollection {
         if let account = req.auth.get(User.self), let accountID = account.id {
             for membership in memberships {
                 let wishlist = membership.wishlist
+                if wishlist.swapID != nil, try await SwapWishlistService.canRead(list: wishlist, userID: accountID, on: req.db) { return true }
                 guard try await ProfileAccessService.canViewWishlist(viewer: account, wishlist: wishlist, owner: wishlist.owner, on: req.db) else { continue }
                 let isOwner = wishlist.$owner.id == accountID
                 let isCollaborator = try await WishlistCollaborator.query(on: req.db)

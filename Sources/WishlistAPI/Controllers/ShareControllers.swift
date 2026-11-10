@@ -886,6 +886,8 @@ struct OwnerShareController: RouteCollection {
             .first()
         else { throw Abort(.notFound) }
 
+        try SwapWishlistService.requireOrdinarySharing(wishlist)
+
         if wishlist.matureContentEnabled || user.matureProfileEnabled {
             guard user.derivedAgeBand == "adult" else {
                 throw Abort(.badRequest, reason: "Only adult accounts can create links for age-limited content.")
@@ -970,11 +972,13 @@ struct OwnerShareController: RouteCollection {
         }
 
         // Ensure the wishlist belongs to this user
-        guard let _ = try await Wishlist.query(on: req.db)
+        guard let wishlist = try await Wishlist.query(on: req.db)
             .filter(\.$id == wishlistID)
             .filter(\.$owner.$id == userId)
             .first()
         else { throw Abort(.notFound) }
+
+        try SwapWishlistService.requireOrdinarySharing(wishlist)
 
         guard let link = try await WishlistShareLink.query(on: req.db)
             .filter(\.$id == shareID)

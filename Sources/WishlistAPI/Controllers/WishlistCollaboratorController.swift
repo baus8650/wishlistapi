@@ -39,6 +39,7 @@ struct WishlistCollaboratorController: RouteCollection {
                 .filter(\.$id == wishlistID).filter(\.$owner.$id == userID).first() else {
             throw Abort(.notFound)
         }
+        try SwapWishlistService.requireOrdinarySharing(wishlist)
         let body = try req.content.decode(UpdateRequest.self)
         guard ["our_wishlist", "gift_planning"].contains(body.mode) else {
             throw Abort(.badRequest, reason: "Invalid collaboration mode.")

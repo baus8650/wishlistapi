@@ -20,12 +20,23 @@ struct SwapWish: Content, Equatable {
     var title: String
     var url: String?
     var note: String?
+    var id: UUID? = nil
+    var updatedAt: Date? = nil
+    var price: Double? = nil
+    var currencyCode: String? = nil
+    var quantity: Int? = nil
+    var salePrice: Double? = nil
+    var saleDiscountPercent: Double? = nil
+    var saleEndsAt: Date? = nil
+    var itemType: String? = nil
+    var contributionGoal: Double? = nil
 }
 struct SwapMember: Codable, Sendable {
     var id = UUID()
     var userID: UUID?
     var name: String
     var status: String = "pending"
+    var wishlistID: UUID?
     var recipientID: UUID?
     var wishes: [SwapWish] = []
     var lastReminder: Date?
@@ -65,4 +76,5 @@ struct SwapView: Content {
     var members: [SwapMemberView]
     var recipient: SwapRecipientView?
     var inviteURL: String?
+    var wishlist: WishlistController.Summary? = nil
 }

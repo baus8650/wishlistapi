@@ -12,7 +12,7 @@ enum ProAccessService {
     static func requireListCapacity(_ user: User, on database: any Database) async throws {
         guard !user.hasLifetimePro else { return }
         let count = try await Wishlist.query(on: database)
-            .filter(\.$owner.$id == user.requireID()).filter(\.$isArchived == false).count()
+            .filter(\.$swapID == nil).filter(\.$owner.$id == user.requireID()).filter(\.$isArchived == false).count()
         guard count < freeListLimit else {
             throw Abort(.forbidden, reason: "Free accounts can have up to three active wishlists. Hushful Pro unlocks unlimited lists.")
         }

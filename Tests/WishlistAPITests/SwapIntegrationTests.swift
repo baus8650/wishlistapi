@@ -46,7 +46,9 @@ struct SwapIntegrationTests {
             do { _ = try await controller.update(req: req); Issue.record("Non-admin drew recipients") }
             catch let error as Abort { #expect(error.status == .conflict || error.status == .forbidden) }
             try req.content.encode(SwapUpdate(action: "accept"))
-            #expect(try await controller.update(req: req).myStatus == "accepted")
+            let accepted = try await controller.update(req: req)
+            #expect(accepted.myStatus == "accepted")
+            #expect(accepted.wishlist != nil)
             try req.content.encode(SwapUpdate(action: "reminder", reminderDays: 12))
             #expect(try await controller.update(req: req).reminderDays == 12)
             try req.content.encode(SwapUpdate(action: "reminder"))
@@ -129,11 +131,12 @@ struct SwapIntegrationTests {
             try await configure(app); try await app.autoMigrate()
             let owner = User(email: "swap-list-\(UUID())@example.com", passwordHash: "unused")
             try await owner.save(on: app.db)
-            let list = try Wishlist(ownerUserId: owner.requireID(), title: "Private ideas"); list.purpose = "for_myself"
+            let list = try Wishlist(ownerUserId: owner.requireID(), title: "Private ideas"); list.purpose = "for_myself"; list.currencyCode = "EUR"
             try await list.save(on: app.db)
-            let item = try WishlistItem(wishlistId: list.requireID(), title: "A book", url: "https://example.com/book", ownerNote: "Paperback")
+            let item = try WishlistItem(wishlistId: list.requireID(), title: "A book", url: "https://example.com/book", price: 20, ownerNote: "Paperback", quantity: 2)
             try await item.save(on: app.db)
             try await WishlistItemMembership(itemID: item.requireID(), wishlistID: list.requireID()).save(on: app.db)
+            try await WishlistItemImage(itemID: item.requireID(), data: Data([4, 5, 6]), contentType: "image/jpeg").save(on: app.db)
             let swap = try HushfulSwap(ownerID: owner.requireID(), state: .init(title: "Copy", exchangeDate: "2027-12-20", currencyCode: "USD", members: [.init(userID: owner.requireID(), name: "Owner", status: "accepted")]))
             try await swap.save(on: app.db)
             let req = Request(application: app, on: app.eventLoopGroup.next()); req.auth.login(owner); req.parameters.set("swapID", to: try swap.requireID().uuidString)
@@ -141,8 +144,19 @@ struct SwapIntegrationTests {
             let copied = try await HushfulSwapController().update(req: req)
             #expect(copied.wishes.first?.title == "A book")
             #expect(copied.wishes.first?.note == "Paperback")
+            #expect(copied.wishes.first?.price == 20)
+            #expect(copied.wishes.first?.quantity == 2)
+            #expect(copied.wishes.first?.currencyCode == "EUR")
+            let copiedItemID = try #require(copied.wishes.first?.id)
+            #expect(try await WishlistItemImage.query(on: app.db).filter(\.$item.$id == copiedItemID).first()?.data == Data([4, 5, 6]))
             #expect(try await WishlistViewer.query(on: app.db).filter(\.$wishlist.$id == list.requireID()).count() == 0)
             #expect(try await Wishlist.find(list.requireID(), on: app.db)?.visibility == "private")
+            item.itemType = "cash_fund"; item.price = nil; item.quantity = 1; item.contributionGoal = 150
+            try await item.save(on: app.db)
+            do { _ = try await HushfulSwapController().update(req: req); Issue.record("Free account copied a new cash fund") }
+            catch let error as Abort { #expect(error.status == .forbidden) }
+            owner.hasLifetimePro = true; try await owner.save(on: app.db)
+            #expect(try await HushfulSwapController().update(req: req).wishes.first?.itemType == "cash_fund")
             list.matureContentEnabled = true; try await list.save(on: app.db)
             do { _ = try await HushfulSwapController().update(req: req); Issue.record("Mature list was copied into a swap") }
             catch let error as Abort { #expect(error.status == .badRequest) }
@@ -167,6 +181,98 @@ struct SwapIntegrationTests {
             #expect(try await HushfulSwap.find(swap.requireID(), on: app.db)?.state.members.first?.purchaseReminderSent == true)
             try await SwapReminderService.sendDue(on: app.db, client: app.client, logger: app.logger)
             #expect(try await ActivityNotification.query(on: app.db).filter(\.$user.$id == user.requireID()).filter(\.$kind == "swap_purchase_reminder").count() == 1)
+            try await user.delete(on: app.db)
+        } catch { try? await app.asyncShutdown(); throw error }
+        try await app.asyncShutdown()
+    }
+
+    @Test func swapWishlistsUseNormalItemCRUDAndKeepGifterReadsAnonymous() async throws {
+        let app = try await Application.make(.testing)
+        do {
+            try await configure(app); try await app.autoMigrate()
+            let users = (0..<3).map { _ in User(email: "swap-items-\(UUID())@example.com", passwordHash: "unused") }
+            for user in users { try await user.save(on: app.db) }
+            var members = try users.map { try SwapMember(userID: $0.requireID(), name: "Participant", status: "accepted") }
+            for i in members.indices { members[i].recipientID = members[(i + 2) % 3].id }
+            let swap = try HushfulSwap(ownerID: users[0].requireID(), state: .init(title: "Our exchange", exchangeDate: "2028-12-20", currencyCode: "USD", status: "drawn", members: members))
+            try await swap.save(on: app.db)
+            let req = Request(application: app, on: app.eventLoopGroup.next())
+            req.auth.login(users[1]); req.parameters.set("swapID", to: try swap.requireID().uuidString)
+            let view = try await HushfulSwapController().detail(req: req)
+            let wishlist = try #require(view.wishlist)
+            let listID = try #require(wishlist.id)
+            #expect(wishlist.title == "Our exchange · Swap wishlist")
+            #expect(wishlist.visibility == "private")
+            #expect(try await WishlistController().index(req: req).allSatisfy { $0.id != listID })
+            req.parameters.set("wishlistID", to: listID.uuidString)
+            let body = try JSONDecoder().decode(WishlistItemController.CreateRequest.self, from: Data(#"{"title":"Coffee grinder","url":"https://example.com/grinder","price":60,"salePrice":45,"quantity":2,"currencyCode":"EUR","ownerNote":"Blue please"}"#.utf8))
+            try req.content.encode(body)
+            let item = try await WishlistItemController().createForWishlist(req: req)
+            try await WishlistItemImage(itemID: item.requireID(), data: Data([1, 2, 3]), contentType: "image/jpeg").save(on: app.db)
+            let ownItems = try await WishlistItemController().listForWishlist(req: req)
+            #expect(ownItems.contains { $0.id == item.id })
+            req.auth.login(users[2])
+            let gifter = try await HushfulSwapController().detail(req: req)
+            let wish = try #require(gifter.recipient?.wishes.first)
+            #expect(wish.title == "Coffee grinder")
+            #expect(wish.id == item.id)
+            #expect(wish.price == 60 && wish.salePrice == 45)
+            #expect(wish.quantity == 2 && wish.currencyCode == "EUR")
+            #expect(wish.note == "Blue please")
+            let recipientJSON = String(decoding: try JSONEncoder().encode(gifter.recipient), as: UTF8.self)
+            #expect(!recipientJSON.contains(listID.uuidString))
+            req.parameters.set("itemID", to: try item.requireID().uuidString)
+            #expect(try await WishlistItemImageController().show(req: req).status == .ok)
+            do { _ = try await WishlistItemController().listForWishlist(req: req); Issue.record("Gifter gained owner API access") }
+            catch let error as Abort { #expect(error.status == .notFound) }
+            req.auth.login(users[0])
+            do { _ = try await WishlistItemImageController().show(req: req); Issue.record("Organizer saw another participant’s image") }
+            catch let error as Abort { #expect(error.status == .notFound) }
+            #expect(try await WishlistViewer.query(on: app.db).filter(\.$wishlist.$id == listID).count() == 0)
+            req.auth.login(users[1])
+            let replacement = try JSONDecoder().decode(WishlistItemController.CreateRequest.self, from: Data(#"{"title":"Edited grinder","price":80,"quantity":3}"#.utf8))
+            try req.content.encode(replacement)
+            _ = try await WishlistItemController().replace(req: req)
+            req.auth.login(users[2])
+            #expect(try await HushfulSwapController().detail(req: req).recipient?.wishes.first?.title == "Edited grinder")
+            req.auth.login(users[1])
+            let settings = try JSONDecoder().decode(WishlistController.UpdateSettingsRequest.self, from: Data(#"{"visibility":"public"}"#.utf8))
+            try req.content.encode(settings)
+            do { _ = try await WishlistController().updateSettings(req: req); Issue.record("Swap wishlist became public") }
+            catch let error as Abort { #expect(error.status == .forbidden) }
+            do { _ = try await OwnerShareController().createShareLink(req: req); Issue.record("Swap wishlist got a guest link") }
+            catch let error as Abort { #expect(error.status == .forbidden) }
+            try req.content.encode(WishlistAudienceController.Audience(userIDs: [], groupIDs: []))
+            do { _ = try await WishlistAudienceController().update(req: req); Issue.record("Swap wishlist got an ordinary audience") }
+            catch let error as Abort { #expect(error.status == .forbidden) }
+            _ = try await WishlistItemController().delete(req: req)
+            #expect(try await HushfulSwapController().detail(req: req).wishes.isEmpty)
+            for user in users { try await user.delete(on: app.db) }
+        } catch { try? await app.asyncShutdown(); throw error }
+        try await app.asyncShutdown()
+    }
+
+    @Test func legacySwapWishesMigrateOnceWithoutUsingFreeListCapacity() async throws {
+        let app = try await Application.make(.testing)
+        do {
+            try await configure(app); try await app.autoMigrate()
+            let user = User(email: "swap-migration-\(UUID())@example.com", passwordHash: "unused")
+            try await user.save(on: app.db)
+            let swap = try HushfulSwap(ownerID: user.requireID(), state: .init(title: "Legacy", exchangeDate: "2028-12-20", currencyCode: "USD", members: [.init(userID: user.requireID(), name: "Owner", status: "accepted", wishes: [.init(title: "Old wish", url: "https://example.com/wish", note: "Keep this")])]))
+            try await swap.save(on: app.db)
+            for _ in 0..<2 { try await Wishlist(ownerUserId: user.requireID(), title: "Ordinary list").save(on: app.db) }
+            let req = Request(application: app, on: app.eventLoopGroup.next()); req.auth.login(user); req.parameters.set("swapID", to: try swap.requireID().uuidString)
+            let first = try await HushfulSwapController().detail(req: req)
+            let second = try await HushfulSwapController().detail(req: req)
+            #expect(first.wishlist?.id == second.wishlist?.id)
+            #expect(second.wishes.count == 1)
+            #expect(second.wishes.first?.title == "Old wish")
+            #expect(second.wishes.first?.note == "Keep this")
+            #expect(try await Wishlist.query(on: app.db).filter(\.$swapID == swap.requireID()).count() == 1)
+            try await ProAccessService.requireListCapacity(user, on: app.db)
+            for list in try await Wishlist.query(on: app.db).filter(\.$owner.$id == user.requireID()).all() {
+                if list.id == first.wishlist?.id { #expect(list.swapID == swap.id) }
+            }
             try await user.delete(on: app.db)
         } catch { try? await app.asyncShutdown(); throw error }
         try await app.asyncShutdown()
