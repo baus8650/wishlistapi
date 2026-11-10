@@ -48,6 +48,26 @@ struct AnnouncementTests {
             do { _ = try await controller.send(req: req); Issue.record("MFA bypass succeeded") }
             catch let error as Abort { #expect(error.status == .unauthorized) }
             req.storage[AdminMFAStorageKey.self] = true
+            // Test sends exercise all three surfaces, restricted to the admin.
+            let device = PushDevice(userID: try admin.requireID(), token: UUID().uuidString, environment: "sandbox")
+            try await device.create(on: app.db)
+            #expect(try await controller.test(req: req) == .noContent)
+            #expect(try await Announcement.find(id, on: app.db) == nil)
+            let previews = try await controller.cards(req: req).filter { $0.title == "[Test] Try a feature" }
+            let preview = try #require(previews.first)
+            #expect(previews.count == 1)
+            #expect(try await ActivityNotification.query(on: app.db).filter(\.$user.$id == admin.requireID()).filter(\.$title == preview.title).count() == 1)
+            #expect(try await AnnouncementDelivery.query(on: app.db).filter(\.$announcement.$id == preview.id).count() == 1)
+            #expect(try await AnnouncementDelivery.query(on: app.db).filter(\.$announcement.$id == preview.id).filter(\.$processed == true).count() == 1)
+            req.auth.login(recipient)
+            #expect(try await controller.cards(req: req).contains { $0.id == preview.id } == false)
+            req.auth.login(admin)
+            // Processing the queue must not create a second Activity entry.
+            try await AnnouncementService.process(on: app.db, client: app.client, logger: app.logger)
+            #expect(try await ActivityNotification.query(on: app.db).filter(\.$user.$id == admin.requireID()).filter(\.$title == preview.title).count() == 1)
+            req.parameters.set("announcementID", to: preview.id.uuidString)
+            #expect(try await controller.dismiss(req: req) == .noContent)
+            #expect(try await controller.cards(req: req).contains { $0.id == preview.id } == false)
             let first = try await controller.send(req: req)
             let retry = try await controller.send(req: req)
             #expect(first.id == retry.id)
@@ -78,6 +98,37 @@ struct AnnouncementTests {
             try req.content.encode(AnnouncementInput(id: id, title: "Changed", message: "Different"))
             do { _ = try await controller.send(req: req); Issue.record("Changed duplicate accepted") }
             catch let error as Abort { #expect(error.status == .conflict) }
+            let targetedID = UUID()
+            let recipientID = try recipient.requireID()
+            try req.content.encode(AnnouncementSelection(userIDs: [recipientID]))
+            let selectedAudience = try await controller.selectedAudience(req: req)
+            #expect(selectedAudience.users == 1)
+            #expect(selectedAudience.pushUsers == 0) // This recipient opted out.
+            try req.content.encode(AnnouncementInput(id: targetedID, title: "Just for you", message: "A targeted announcement", userIDs: [recipientID, recipientID]))
+            let targeted = try await controller.send(req: req)
+            #expect(targeted.recipientCount == 1)
+            #expect(targeted.audience == "selected")
+            #expect(try await controller.send(req: req).id == targeted.id)
+            #expect(try await AnnouncementDelivery.query(on: app.db).filter(\.$announcement.$id == targetedID).count() == 1)
+            #expect(try await controller.cards(req: req).contains { $0.id == targetedID } == false)
+            req.auth.login(recipient)
+            #expect(try await controller.cards(req: req).contains { $0.id == targetedID })
+            req.auth.login(admin)
+            try await AnnouncementService.process(on: app.db, client: app.client, logger: app.logger)
+            #expect(try await ActivityNotification.query(on: app.db).filter(\.$user.$id == recipientID).filter(\.$title == "Just for you").count() == 1)
+            #expect(try await ActivityNotification.query(on: app.db).filter(\.$user.$id == admin.requireID()).filter(\.$title == "Just for you").count() == 0)
+            try req.content.encode(AnnouncementInput(id: targetedID, title: "Just for you", message: "A targeted announcement"))
+            do { _ = try await controller.send(req: req); Issue.record("Audience changed on retry") }
+            catch let error as Abort { #expect(error.status == .conflict) }
+            for ids: [UUID] in [[], [UUID()], [try unverified.requireID()], [try suspended.requireID()]] {
+                let invalidID = UUID()
+                try req.content.encode(AnnouncementInput(id: invalidID, title: "Invalid audience", message: "Must not broadcast", userIDs: ids))
+                do { _ = try await controller.send(req: req); Issue.record("Invalid selection accepted") }
+                catch let error as Abort { #expect(error.status == .badRequest) }
+                #expect(try await Announcement.find(invalidID, on: app.db) == nil)
+            }
+            try await Announcement.find(targetedID, on: app.db)?.delete(on: app.db)
+            try await Announcement.find(preview.id, on: app.db)?.delete(on: app.db)
             try await Announcement.find(id, on: app.db)?.delete(on: app.db)
             for user in [admin, recipient, unverified, suspended] { try await user.delete(on: app.db) }
             try await app.asyncShutdown()

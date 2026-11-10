@@ -6,6 +6,7 @@ struct AnnouncementInput: Content {
     let id: UUID
     let title: String
     let message: String
+    var userIDs: [UUID]? = nil
 
     func validated() throws -> (String, String) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -23,6 +24,7 @@ struct AnnouncementResponse: Content {
     let message: String
     let recipientCount: Int
     let pendingCount: Int
+    let audience: String
     let createdAt: Date?
 }
 
@@ -34,6 +36,7 @@ struct AnnouncementCard: Content {
 }
 
 struct AnnouncementPreference: Content { let enabled: Bool }
+struct AnnouncementSelection: Content { var userIDs: [UUID]? = nil }
 struct AnnouncementAudience: Content { let users: Int; let pushUsers: Int }
 
 struct AnnouncementController: RouteCollection {
@@ -44,6 +47,7 @@ struct AnnouncementController: RouteCollection {
         routes.put("me", "announcement-preference", use: updatePreference)
         routes.get("admin", "announcements", use: list)
         routes.get("admin", "announcements", "audience", use: audience)
+        routes.post("admin", "announcements", "audience", use: selectedAudience)
         routes.post("admin", "announcements", "test", use: test)
         routes.post("admin", "announcements", use: send)
     }
@@ -83,7 +87,7 @@ struct AnnouncementController: RouteCollection {
     func response(_ item: Announcement, db: any Database) async throws -> AnnouncementResponse {
         let id = try item.requireID()
         let pending = try await AnnouncementDelivery.query(on: db).filter(\.$announcement.$id == id).filter(\.$processed == false).count()
-        return .init(id: id, title: item.title, message: item.message, recipientCount: item.recipientCount, pendingCount: pending, createdAt: item.createdAt)
+        return .init(id: id, title: item.title, message: item.message, recipientCount: item.recipientCount, pendingCount: pending, audience: item.recipientIDs == nil ? "everyone" : "selected", createdAt: item.createdAt)
     }
     func list(req: Request) async throws -> [AnnouncementResponse] {
         _ = try AdminAccessService.require(req)
@@ -95,8 +99,27 @@ struct AnnouncementController: RouteCollection {
     }
     func audience(req: Request) async throws -> AnnouncementAudience {
         _ = try AdminAccessService.require(req)
-        let users = try await User.query(on: req.db).filter(\.$emailVerifiedAt != nil).filter(\.$suspendedAt == nil).all()
-        let devices = Set(try await PushDevice.query(on: req.db).all().map { $0.$user.id })
+        return try await audienceResponse(userIDs: nil, db: req.db)
+    }
+    func selectedAudience(req: Request) async throws -> AnnouncementAudience {
+        _ = try AdminAccessService.require(req)
+        let body = try req.content.decode(AnnouncementSelection.self)
+        return try await audienceResponse(userIDs: body.userIDs, db: req.db)
+    }
+    func eligibleUsers(userIDs: [UUID]?, db: any Database) async throws -> [User] {
+        let query = User.query(on: db).filter(\.$emailVerifiedAt != nil).filter(\.$suspendedAt == nil)
+        if let userIDs {
+            let ids = Set(userIDs)
+            guard !ids.isEmpty, ids.count <= 1000 else { throw Abort(.badRequest, reason: "Select between 1 and 1,000 accounts.") }
+            let users = try await query.filter(\.$id ~~ Array(ids)).all()
+            guard users.count == ids.count else { throw Abort(.badRequest, reason: "Some selected accounts are unavailable, unverified, or suspended. Update your selection.") }
+            return users
+        }
+        return try await query.all()
+    }
+    func audienceResponse(userIDs: [UUID]?, db: any Database) async throws -> AnnouncementAudience {
+        let users = try await eligibleUsers(userIDs: userIDs, db: db)
+        let devices = Set(try await PushDevice.query(on: db).all().map { $0.$user.id })
         return .init(users: users.count, pushUsers: users.filter { $0.announcementPushEnabled != false && devices.contains($0.id!) }.count)
     }
     func test(req: Request) async throws -> HTTPStatus {
@@ -107,8 +130,21 @@ struct AnnouncementController: RouteCollection {
         guard try await PushDevice.query(on: req.db).filter(\.$user.$id == id).count() > 0 else {
             throw Abort(.badRequest, reason: "Enable push notifications on your device before sending a test.")
         }
-        // An explicit test request sends only to the administrator's devices.
-        let notification = ActivityNotification(userID: id, kind: "announcement_test", title: "[Test] " + title, message: message)
+        // Give each preview its own ID so testing a draft never consumes its
+        // broadcast ID. Commit the card and Activity entry before sending push.
+        let notification = try await req.db.transaction { db in
+            let previewID = UUID()
+            let previewTitle = "[Test] " + title
+            let preview = Announcement(id: previewID, title: previewTitle, message: message, adminID: id, recipientCount: 1, recipientIDs: [id])
+            try await preview.create(on: db)
+            let delivery = AnnouncementDelivery(announcementID: previewID, userID: id)
+            delivery.processed = true
+            try await delivery.create(on: db)
+            let notification = ActivityNotification(userID: id, kind: "announcement", title: previewTitle, message: message)
+            try await notification.create(on: db)
+            return notification
+        }
+        await AdminAuditService.record(req, adminID: id, action: "test_announcement", targetType: "announcement")
         await ActivityService.sendPush(notification, on: req.db, client: req.client, logger: req.logger)
         return .noContent
     }
@@ -121,13 +157,14 @@ struct AnnouncementController: RouteCollection {
             // Serialize retries of this request, including concurrent requests.
             try await sql.raw("SELECT pg_advisory_xact_lock(hashtext(\(bind: input.id.uuidString)))").run()
             if let existing = try await Announcement.find(input.id, on: db) {
-                guard existing.title == title, existing.message == message, existing.$admin.id == adminID else {
+                guard existing.title == title, existing.message == message, existing.$admin.id == adminID,
+                      existing.recipientIDs.map(Set.init) == input.userIDs.map(Set.init) else {
                     throw Abort(.conflict, reason: "This announcement ID has already been used.")
                 }
                 return existing
             }
-            let users = try await User.query(on: db).filter(\.$emailVerifiedAt != nil).filter(\.$suspendedAt == nil).all()
-            let item = Announcement(id: input.id, title: title, message: message, adminID: adminID, recipientCount: users.count)
+            let users = try await eligibleUsers(userIDs: input.userIDs, db: db)
+            let item = Announcement(id: input.id, title: title, message: message, adminID: adminID, recipientCount: users.count, recipientIDs: input.userIDs.map { Array(Set($0)) })
             try await item.create(on: db)
             for user in users {
                 try await AnnouncementDelivery(announcementID: input.id, userID: try user.requireID()).create(on: db)

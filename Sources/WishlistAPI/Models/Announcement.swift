@@ -6,13 +6,14 @@ final class Announcement: Model, @unchecked Sendable {
     @ID(key: .id) var id: UUID?
     @Field(key: "title") var title: String
     @Field(key: "message") var message: String
+    @OptionalField(key: "recipient_ids") var recipientIDs: [UUID]?
     @Field(key: "recipient_count") var recipientCount: Int
     @OptionalParent(key: "admin_id") var admin: User?
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
     init() {}
-    init(id: UUID, title: String, message: String, adminID: UUID, recipientCount: Int) {
+    init(id: UUID, title: String, message: String, adminID: UUID, recipientCount: Int, recipientIDs: [UUID]? = nil) {
         self.id = id; self.title = title; self.message = message
-        self.$admin.id = adminID; self.recipientCount = recipientCount
+        self.$admin.id = adminID; self.recipientCount = recipientCount; self.recipientIDs = recipientIDs
     }
 }
 
