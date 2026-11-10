@@ -26,11 +26,20 @@ struct AnnouncementResponse: Content {
     let createdAt: Date?
 }
 
+struct AnnouncementCard: Content {
+    let id: UUID
+    let title: String
+    let message: String
+    let createdAt: Date?
+}
+
 struct AnnouncementPreference: Content { let enabled: Bool }
 struct AnnouncementAudience: Content { let users: Int; let pushUsers: Int }
 
 struct AnnouncementController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
+        routes.get("announcements", use: cards)
+        routes.post("announcements", ":announcementID", "dismiss", use: dismiss)
         routes.get("me", "announcement-preference", use: preference)
         routes.put("me", "announcement-preference", use: updatePreference)
         routes.get("admin", "announcements", use: list)
@@ -38,8 +47,31 @@ struct AnnouncementController: RouteCollection {
         routes.post("admin", "announcements", "test", use: test)
         routes.post("admin", "announcements", use: send)
     }
+    func cards(req: Request) async throws -> [AnnouncementCard] {
+        let userID = try req.auth.require(User.self).requireID()
+        let deliveries = try await AnnouncementDelivery.query(on: req.db)
+            .filter(\.$user.$id == userID).filter(\.$dismissedAt == nil)
+            .join(Announcement.self, on: \AnnouncementDelivery.$announcement.$id == \Announcement.$id)
+            .sort(Announcement.self, \.$createdAt, .descending)
+            .with(\.$announcement).limit(50).all()
+        return try deliveries.map { delivery in
+            let item = delivery.announcement
+            return AnnouncementCard(id: try item.requireID(), title: item.title, message: item.message, createdAt: item.createdAt)
+        }
+    }
+    func dismiss(req: Request) async throws -> HTTPStatus {
+        let userID = try req.auth.require(User.self).requireID()
+        guard let id = req.parameters.get("announcementID", as: UUID.self),
+              let delivery = try await AnnouncementDelivery.query(on: req.db)
+                .filter(\.$user.$id == userID).filter(\.$announcement.$id == id).first() else {
+            throw Abort(.notFound)
+        }
+        delivery.dismissedAt = delivery.dismissedAt ?? Date()
+        try await delivery.save(on: req.db)
+        return .noContent
+    }
     func preference(req: Request) throws -> AnnouncementPreference {
-        .init(enabled: try req.auth.require(User.self).announcementPushEnabled == true)
+        .init(enabled: try req.auth.require(User.self).announcementPushEnabled != false)
     }
     func updatePreference(req: Request) async throws -> AnnouncementPreference {
         let user = try req.auth.require(User.self)
@@ -65,7 +97,7 @@ struct AnnouncementController: RouteCollection {
         _ = try AdminAccessService.require(req)
         let users = try await User.query(on: req.db).filter(\.$emailVerifiedAt != nil).filter(\.$suspendedAt == nil).all()
         let devices = Set(try await PushDevice.query(on: req.db).all().map { $0.$user.id })
-        return .init(users: users.count, pushUsers: users.filter { $0.announcementPushEnabled == true && devices.contains($0.id!) }.count)
+        return .init(users: users.count, pushUsers: users.filter { $0.announcementPushEnabled != false && devices.contains($0.id!) }.count)
     }
     func test(req: Request) async throws -> HTTPStatus {
         let admin = try AdminAccessService.require(req)
@@ -132,7 +164,7 @@ enum AnnouncementService {
                     let notification = ActivityNotification(userID: try user.requireID(), kind: "announcement", title: item.title, message: item.message)
                     try await notification.save(on: tx)
                     // Recheck consent at delivery time. Other notification types are unaffected.
-                    if user.announcementPushEnabled == true {
+                    if user.announcementPushEnabled != false, delivery.dismissedAt == nil {
                         await ActivityService.sendPush(notification, on: tx, client: client, logger: logger)
                     }
                 }

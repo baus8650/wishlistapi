@@ -33,7 +33,7 @@ struct AnnouncementTests {
             let req = Request(application: app, on: app.eventLoopGroup.next())
             let controller = AnnouncementController()
             req.auth.login(recipient)
-            #expect(try controller.preference(req: req).enabled == false)
+            #expect(try controller.preference(req: req).enabled == true)
             try req.content.encode(AnnouncementPreference(enabled: true))
             #expect(try await controller.updatePreference(req: req).enabled)
             try req.content.encode(AnnouncementPreference(enabled: false))
@@ -51,6 +51,22 @@ struct AnnouncementTests {
             let first = try await controller.send(req: req)
             let retry = try await controller.send(req: req)
             #expect(first.id == retry.id)
+            req.auth.login(recipient)
+            #expect(try await controller.cards(req: req).contains { $0.id == id })
+            req.parameters.set("announcementID", to: id.uuidString)
+            #expect(try await controller.dismiss(req: req) == .noContent)
+            #expect(try await controller.dismiss(req: req) == .noContent)
+            #expect(try await controller.cards(req: req).contains { $0.id == id } == false)
+            // A fresh request models another device using the same account.
+            let otherDevice = Request(application: app, on: app.eventLoopGroup.next())
+            otherDevice.auth.login(recipient)
+            #expect(try await controller.cards(req: otherDevice).contains { $0.id == id } == false)
+            req.auth.login(unverified)
+            do { _ = try await controller.dismiss(req: req); Issue.record("Non-recipient dismissed an announcement") }
+            catch let error as Abort { #expect(error.status == .notFound) }
+            req.auth.login(admin)
+            #expect(try await controller.cards(req: req).contains { $0.id == id })
+
             #expect(try await AnnouncementDelivery.query(on: app.db).filter(\.$announcement.$id == id).count() == first.recipientCount)
             #expect(try await AnnouncementDelivery.query(on: app.db).filter(\.$announcement.$id == id).filter(\.$user.$id == unverified.requireID()).count() == 0)
             #expect(try await AnnouncementDelivery.query(on: app.db).filter(\.$announcement.$id == id).filter(\.$user.$id == suspended.requireID()).count() == 0)

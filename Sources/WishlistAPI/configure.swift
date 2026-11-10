@@ -185,6 +185,7 @@ public func configure(_ app: Application) async throws {
     app.lifecycle.use(UsageRetentionLifecycle())
 
     app.migrations.add(CreateAnnouncements())
+    app.migrations.add(AddAnnouncementDismissals())
     AnnouncementService.schedule(on: app)
 
     // MARK: Routes

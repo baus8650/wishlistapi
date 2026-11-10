@@ -22,6 +22,7 @@ final class AnnouncementDelivery: Model, @unchecked Sendable {
     @Parent(key: "announcement_id") var announcement: Announcement
     @Parent(key: "user_id") var user: User
     @Field(key: "processed") var processed: Bool
+    @OptionalField(key: "dismissed_at") var dismissedAt: Date?
     init() {}
     init(announcementID: UUID, userID: UUID) {
         self.$announcement.id = announcementID; self.$user.id = userID; self.processed = false
