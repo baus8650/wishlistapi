@@ -156,6 +156,7 @@ func routes(_ app: Application) throws {
     try protected.register(collection: UserReportController())
     try protected.register(collection: AccountAvatarController())
     try protected.register(collection: ActivityController())
+    try protected.register(collection: AnnouncementController())
     try protected.register(collection: PushDeviceController())
     try protected.register(collection: FriendProfileController())
     try protected.register(collection: ProfileDetailsController())

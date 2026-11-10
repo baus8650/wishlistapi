@@ -1,0 +1,29 @@
+import Fluent
+import Vapor
+
+final class Announcement: Model, @unchecked Sendable {
+    static let schema = "announcements"
+    @ID(key: .id) var id: UUID?
+    @Field(key: "title") var title: String
+    @Field(key: "message") var message: String
+    @Field(key: "recipient_count") var recipientCount: Int
+    @OptionalParent(key: "admin_id") var admin: User?
+    @Timestamp(key: "created_at", on: .create) var createdAt: Date?
+    init() {}
+    init(id: UUID, title: String, message: String, adminID: UUID, recipientCount: Int) {
+        self.id = id; self.title = title; self.message = message
+        self.$admin.id = adminID; self.recipientCount = recipientCount
+    }
+}
+
+final class AnnouncementDelivery: Model, @unchecked Sendable {
+    static let schema = "announcement_deliveries"
+    @ID(key: .id) var id: UUID?
+    @Parent(key: "announcement_id") var announcement: Announcement
+    @Parent(key: "user_id") var user: User
+    @Field(key: "processed") var processed: Bool
+    init() {}
+    init(announcementID: UUID, userID: UUID) {
+        self.$announcement.id = announcementID; self.$user.id = userID; self.processed = false
+    }
+}

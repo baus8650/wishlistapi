@@ -1,0 +1,17 @@
+# Announcements
+
+Administrators can compose an announcement in iOS Settings → Administration → Announcements or the web Account & privacy administration area. Preview the title/message, send a test to your own registered devices, then confirm the broadcast. The history shows recipient and pending counts.
+
+Each broadcast snapshots verified, non-suspended accounts. Delivery creates one Activity entry per recipient, including the sender. Push alerts use the existing APNs/FCM configuration and are sent only if the recipient has opted into **Feature tips & announcements** and has a registered device. The preference is account-wide, defaults off, and can be changed in iOS notification settings or the web account screen. Other notification categories are unaffected. Opening an iOS announcement push opens Activity.
+
+Deploy the API and apply `CreateAnnouncements` before releasing clients. Existing users have announcement pushes disabled until they opt in; they can receive Activity announcements immediately after API deployment. No broadcast is sent by deployment itself.
+
+The client supplies a stable UUID per announcement. Retrying that UUID returns the existing broadcast; changing its content returns a conflict. The background worker processes up to 25 recipients every 10 seconds with PostgreSQL row locks, resuming pending work after restarts. Suspended/unverified recipients are skipped at delivery time, and push consent is rechecked then. History counts are attempts, not provider/device delivery receipts. Push delivery is best effort, matching other Hushful pushes; a process crash after provider acceptance but before the database commit can repeat a push on recovery.
+
+Run focused tests against a disposable PostgreSQL database whose name ends in `_test`:
+
+```sh
+DATABASE_HOST=127.0.0.1 DATABASE_PORT=55439 DATABASE_USERNAME=wishlist DATABASE_PASSWORD=wishlist DATABASE_NAME=hushful_announcements_test swift test --filter Announcement
+```
+
+The integration test is skipped unless `DATABASE_NAME` ends in `_test` and `DATABASE_URL` is unset. Never point it at a live database: it exercises broadcast fan-out across all eligible test accounts. Tests do not require APNs/FCM credentials.

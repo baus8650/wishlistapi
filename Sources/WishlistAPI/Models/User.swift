@@ -93,6 +93,8 @@ final class User: Model {
     @OptionalField(key: "age_confirmed_at") var ageConfirmedAt: Date?
     @OptionalField(key: "suspended_at") var suspendedAt: Date?
 
+    @OptionalField(key: "announcement_push_enabled") var announcementPushEnabled: Bool?
+
     @Field(key: "role") var role: String
     @OptionalField(key: "admin_totp_secret") var adminTOTPSecret: String?
     @Field(key: "admin_totp_enabled") var adminTOTPEnabled: Bool

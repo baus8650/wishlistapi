@@ -183,6 +183,9 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddUsageLocationDetails())
     app.lifecycle.use(UsageRetentionLifecycle())
 
+    app.migrations.add(CreateAnnouncements())
+    AnnouncementService.schedule(on: app)
+
     // MARK: Routes
     try routes(app)
     try usageAnalyticsRoutes(app)
