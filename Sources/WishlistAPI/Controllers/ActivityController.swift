@@ -33,13 +33,13 @@ enum ActivityService {
         if let client, let logger { await sendPush(notification, on: db, client: client, logger: logger) }
     }
 
-    static func sendPush(_ notification: ActivityNotification, on db: any Database, client: any Client, logger: Logger) async {
+    static func sendPush(_ notification: ActivityNotification, pushMessage: String? = nil, on db: any Database, client: any Client, logger: Logger) async {
         let userID = notification.$user.id
-        await APNSService.send(userID: userID, kind: notification.kind, title: notification.title, message: notification.message,
+        await APNSService.send(userID: userID, kind: notification.kind, title: notification.title, message: pushMessage ?? notification.message,
             actorID: notification.$actor.id, wishlistID: notification.$wishlist.id, itemID: notification.itemID,
             feedbackID: notification.feedbackID, feedbackAdmin: notification.feedbackAdmin, reportID: notification.reportID,
             on: db, client: client, logger: logger)
-        await FCMService.send(userID: userID, kind: notification.kind, title: notification.title, message: notification.message,
+        await FCMService.send(userID: userID, kind: notification.kind, title: notification.title, message: pushMessage ?? notification.message,
             actorID: notification.$actor.id, wishlistID: notification.$wishlist.id, itemID: notification.itemID,
             feedbackID: notification.feedbackID, feedbackAdmin: notification.feedbackAdmin, reportID: notification.reportID,
             on: db, client: client, logger: logger)

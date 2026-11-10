@@ -5,14 +5,15 @@ final class Announcement: Model, @unchecked Sendable {
     static let schema = "announcements"
     @ID(key: .id) var id: UUID?
     @Field(key: "title") var title: String
+    @OptionalField(key: "push_body") var pushBody: String?
     @Field(key: "message") var message: String
     @OptionalField(key: "recipient_ids") var recipientIDs: [UUID]?
     @Field(key: "recipient_count") var recipientCount: Int
     @OptionalParent(key: "admin_id") var admin: User?
     @Timestamp(key: "created_at", on: .create) var createdAt: Date?
     init() {}
-    init(id: UUID, title: String, message: String, adminID: UUID, recipientCount: Int, recipientIDs: [UUID]? = nil) {
-        self.id = id; self.title = title; self.message = message
+    init(id: UUID, title: String, message: String, adminID: UUID, recipientCount: Int, recipientIDs: [UUID]? = nil, pushBody: String? = nil) {
+        self.id = id; self.title = title; self.message = message; self.pushBody = pushBody
         self.$admin.id = adminID; self.recipientCount = recipientCount; self.recipientIDs = recipientIDs
     }
 }

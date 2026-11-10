@@ -6,15 +6,24 @@ struct AnnouncementInput: Content {
     let id: UUID
     let title: String
     let message: String
+    var pushBody: String? = nil
     var userIDs: [UUID]? = nil
 
     func validated() throws -> (String, String) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let message = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title.count <= 80, !message.isEmpty, message.count <= 500 else {
-            throw Abort(.badRequest, reason: "Enter a title of 1–80 characters and a message of 1–500 characters.")
+        guard !title.isEmpty, title.count <= 80, !message.isEmpty, message.count <= (pushBody == nil ? 500 : 10000) else {
+            throw Abort(.badRequest, reason: "Enter a title of 1–80 characters and announcement text of 1–10,000 characters.")
         }
+        _ = try validatedPushBody()
         return (title, message)
+    }
+    func validatedPushBody() throws -> String {
+        let text = (pushBody ?? message).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.count <= 500 else {
+            throw Abort(.badRequest, reason: "Enter push notification text of 1–500 characters.")
+        }
+        return text
     }
 }
 
@@ -23,6 +32,7 @@ struct AnnouncementResponse: Content {
     let title: String
     let message: String
     let recipientCount: Int
+    let pushBody: String?
     let pendingCount: Int
     let audience: String
     let createdAt: Date?
@@ -87,7 +97,7 @@ struct AnnouncementController: RouteCollection {
     func response(_ item: Announcement, db: any Database) async throws -> AnnouncementResponse {
         let id = try item.requireID()
         let pending = try await AnnouncementDelivery.query(on: db).filter(\.$announcement.$id == id).filter(\.$processed == false).count()
-        return .init(id: id, title: item.title, message: item.message, recipientCount: item.recipientCount, pendingCount: pending, audience: item.recipientIDs == nil ? "everyone" : "selected", createdAt: item.createdAt)
+        return .init(id: id, title: item.title, message: item.message, recipientCount: item.recipientCount, pushBody: item.pushBody ?? item.message, pendingCount: pending, audience: item.recipientIDs == nil ? "everyone" : "selected", createdAt: item.createdAt)
     }
     func list(req: Request) async throws -> [AnnouncementResponse] {
         _ = try AdminAccessService.require(req)
@@ -126,6 +136,7 @@ struct AnnouncementController: RouteCollection {
         let admin = try AdminAccessService.require(req)
         let input = try req.content.decode(AnnouncementInput.self)
         let (title, message) = try input.validated()
+        let pushBody = try input.validatedPushBody()
         let id = try admin.requireID()
         guard try await PushDevice.query(on: req.db).filter(\.$user.$id == id).count() > 0 else {
             throw Abort(.badRequest, reason: "Enable push notifications on your device before sending a test.")
@@ -135,7 +146,7 @@ struct AnnouncementController: RouteCollection {
         let notification = try await req.db.transaction { db in
             let previewID = UUID()
             let previewTitle = "[Test] " + title
-            let preview = Announcement(id: previewID, title: previewTitle, message: message, adminID: id, recipientCount: 1, recipientIDs: [id])
+            let preview = Announcement(id: previewID, title: previewTitle, message: message, adminID: id, recipientCount: 1, recipientIDs: [id], pushBody: pushBody)
             try await preview.create(on: db)
             let delivery = AnnouncementDelivery(announcementID: previewID, userID: id)
             delivery.processed = true
@@ -145,26 +156,27 @@ struct AnnouncementController: RouteCollection {
             return notification
         }
         await AdminAuditService.record(req, adminID: id, action: "test_announcement", targetType: "announcement")
-        await ActivityService.sendPush(notification, on: req.db, client: req.client, logger: req.logger)
+        await ActivityService.sendPush(notification, pushMessage: pushBody, on: req.db, client: req.client, logger: req.logger)
         return .noContent
     }
     func send(req: Request) async throws -> AnnouncementResponse {
         let adminID = try AdminAccessService.require(req).requireID()
         let input = try req.content.decode(AnnouncementInput.self)
         let (title, message) = try input.validated()
+        let pushBody = try input.validatedPushBody()
         let item: Announcement = try await req.db.transaction { db in
             guard let sql = db as? any SQLDatabase else { throw Abort(.internalServerError) }
             // Serialize retries of this request, including concurrent requests.
             try await sql.raw("SELECT pg_advisory_xact_lock(hashtext(\(bind: input.id.uuidString)))").run()
             if let existing = try await Announcement.find(input.id, on: db) {
-                guard existing.title == title, existing.message == message, existing.$admin.id == adminID,
+                guard existing.title == title, existing.message == message, (existing.pushBody ?? existing.message) == pushBody, existing.$admin.id == adminID,
                       existing.recipientIDs.map(Set.init) == input.userIDs.map(Set.init) else {
                     throw Abort(.conflict, reason: "This announcement ID has already been used.")
                 }
                 return existing
             }
             let users = try await eligibleUsers(userIDs: input.userIDs, db: db)
-            let item = Announcement(id: input.id, title: title, message: message, adminID: adminID, recipientCount: users.count, recipientIDs: input.userIDs.map { Array(Set($0)) })
+            let item = Announcement(id: input.id, title: title, message: message, adminID: adminID, recipientCount: users.count, recipientIDs: input.userIDs.map { Array(Set($0)) }, pushBody: pushBody)
             try await item.create(on: db)
             for user in users {
                 try await AnnouncementDelivery(announcementID: input.id, userID: try user.requireID()).create(on: db)
@@ -202,7 +214,7 @@ enum AnnouncementService {
                     try await notification.save(on: tx)
                     // Recheck consent at delivery time. Other notification types are unaffected.
                     if user.announcementPushEnabled != false, delivery.dismissedAt == nil {
-                        await ActivityService.sendPush(notification, on: tx, client: client, logger: logger)
+                        await ActivityService.sendPush(notification, pushMessage: item.pushBody ?? item.message, on: tx, client: client, logger: logger)
                     }
                 }
                 delivery.processed = true

@@ -187,6 +187,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateAnnouncements())
     app.migrations.add(AddAnnouncementDismissals())
     app.migrations.add(AddAnnouncementAudience())
+    app.migrations.add(AddAnnouncementPushBody())
     AnnouncementService.schedule(on: app)
 
     // MARK: Routes

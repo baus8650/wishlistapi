@@ -16,6 +16,18 @@ struct AnnouncementTests {
         }
     }
 
+    @Test func separatePushAndAnnouncementText() throws {
+        let longText = String(repeating: "Full announcement.\n", count: 100)
+        let input = AnnouncementInput(id: UUID(), title: "Hello", message: longText, pushBody: "  Read the news  ")
+        #expect(try input.validated().1 == longText.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(try input.validatedPushBody() == "Read the news")
+        #expect(try AnnouncementInput(id: UUID(), title: "Legacy", message: "Older message").validatedPushBody() == "Older message")
+        for push in [" ", String(repeating: "x", count: 501)] {
+            #expect(throws: Abort.self) { try AnnouncementInput(id: UUID(), title: "Hello", message: longText, pushBody: push).validated() }
+        }
+        #expect(throws: Abort.self) { try AnnouncementInput(id: UUID(), title: "Hello", message: String(repeating: "x", count: 10001), pushBody: "Short alert").validated() }
+    }
+
     @Test(.enabled(if: Environment.get("DATABASE_NAME")?.hasSuffix("_test") == true && Environment.get("DATABASE_URL") == nil))
     func broadcastAuthorizationConsentAndIdempotency() async throws {
         let app = try await Application.make(.testing)
@@ -40,7 +52,7 @@ struct AnnouncementTests {
             #expect(try await controller.updatePreference(req: req).enabled == false)
             #expect(try await User.find(recipient.requireID(), on: app.db)?.announcementPushEnabled == false)
             let id = UUID()
-            try req.content.encode(AnnouncementInput(id: id, title: "Try a feature", message: "Find it in My Lists."))
+            try req.content.encode(AnnouncementInput(id: id, title: "Try a feature", message: "Find it in My Lists.", pushBody: "A short feature tip"))
             do { _ = try await controller.send(req: req); Issue.record("Non-admin broadcast succeeded") }
             catch let error as Abort { #expect(error.status == .forbidden) }
             req.auth.login(admin)
@@ -56,6 +68,10 @@ struct AnnouncementTests {
             let previews = try await controller.cards(req: req).filter { $0.title == "[Test] Try a feature" }
             let preview = try #require(previews.first)
             #expect(previews.count == 1)
+            #expect(preview.message == "Find it in My Lists.")
+            #expect(try await Announcement.find(preview.id, on: app.db)?.pushBody == "A short feature tip")
+            let previewActivity = try await ActivityNotification.query(on: app.db).filter(\.$user.$id == admin.requireID()).filter(\.$title == preview.title).first()
+            #expect(previewActivity?.message == "Find it in My Lists.")
             #expect(try await ActivityNotification.query(on: app.db).filter(\.$user.$id == admin.requireID()).filter(\.$title == preview.title).count() == 1)
             #expect(try await AnnouncementDelivery.query(on: app.db).filter(\.$announcement.$id == preview.id).count() == 1)
             #expect(try await AnnouncementDelivery.query(on: app.db).filter(\.$announcement.$id == preview.id).filter(\.$processed == true).count() == 1)
@@ -71,6 +87,10 @@ struct AnnouncementTests {
             let first = try await controller.send(req: req)
             let retry = try await controller.send(req: req)
             #expect(first.id == retry.id)
+            #expect(first.pushBody == "A short feature tip")
+            try req.content.encode(AnnouncementInput(id: id, title: "Try a feature", message: "Find it in My Lists.", pushBody: "Changed push"))
+            do { _ = try await controller.send(req: req); Issue.record("Push text changed on retry") }
+            catch let error as Abort { #expect(error.status == .conflict) }
             req.auth.login(recipient)
             #expect(try await controller.cards(req: req).contains { $0.id == id })
             req.parameters.set("announcementID", to: id.uuidString)
