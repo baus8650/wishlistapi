@@ -147,6 +147,55 @@ struct AnnouncementTests {
                 catch let error as Abort { #expect(error.status == .badRequest) }
                 #expect(try await Announcement.find(invalidID, on: app.db) == nil)
             }
+            req.auth.login(recipient)
+            req.parameters.set("announcementID", to: targetedID.uuidString)
+            let archive = try await controller.archive(req: req)
+            #expect(archive.items.contains { $0.id == id }) // Previously dismissed on My Lists.
+            #expect(archive.items.contains { $0.id == targetedID })
+            #expect(archive.unreadCount == 1)
+            #expect(try await ActivityService.unreadCount(userID: recipientID, on: app.db) == 1) // No double counting its Activity copy.
+            let normal = ActivityNotification(userID: recipientID, kind: "friend_accepted", title: "Friend", message: "Hello")
+            try await normal.create(on: app.db)
+            #expect(try await ActivityService.unreadCount(userID: recipientID, on: app.db) == 2)
+            req.url = URI(string: "/v1/activity?category=activity")
+            let activityController = ActivityController()
+            #expect(try await activityController.list(req: req).allSatisfy { $0.kind != "announcement" })
+            _ = try await activityController.readAll(req: req)
+            #expect(try await controller.archive(req: req).unreadCount == 1)
+            #expect(try await ActivityService.unreadCount(userID: recipientID, on: app.db) == 1)
+            _ = try await activityController.clearAll(req: req)
+            req.url = URI(string: "/v1/activity") // Older clients can also clear the legacy announcement copies.
+            _ = try await activityController.clearAll(req: req)
+            #expect(try await ActivityNotification.query(on: app.db).filter(\.$user.$id == recipientID).count() == 0)
+            #expect(try await controller.archive(req: req).items.contains { $0.id == targetedID })
+            #expect(try await controller.read(req: req) == .noContent)
+            #expect(try await controller.read(req: req) == .noContent)
+            #expect(try await controller.archive(req: req).unreadCount == 0)
+            #expect(try await controller.cards(req: req).contains { $0.id == targetedID }) // Reading is separate from dismissal.
+            req.auth.login(unverified)
+            do { _ = try await controller.read(req: req); Issue.record("Non-recipient read another account's announcement") }
+            catch let error as Abort { #expect(error.status == .notFound) }
+            #expect(try await controller.archive(req: req).items.isEmpty)
+            req.auth.login(recipient)
+            var olderIDs: [UUID] = []
+            for index in 0..<55 {
+                let olderID = UUID(); olderIDs.append(olderID)
+                let older = Announcement(id: olderID, title: "Archive \(index)", message: "Older news", adminID: try admin.requireID(), recipientCount: 1, recipientIDs: [recipientID])
+                try await older.create(on: app.db)
+                let delivery = AnnouncementDelivery(announcementID: olderID, userID: recipientID)
+                delivery.processed = true
+                try await delivery.create(on: app.db)
+            }
+            let firstPage = try await controller.archive(req: req)
+            #expect(firstPage.items.count == 50)
+            #expect(firstPage.nextPage == 2)
+            req.url = URI(string: "/v1/announcements/history?page=2")
+            let secondPage = try await controller.archive(req: req)
+            #expect(secondPage.items.count == 7)
+            #expect(secondPage.nextPage == nil)
+            #expect(Set(firstPage.items.map(\.id)).intersection(secondPage.items.map(\.id)).isEmpty)
+            #expect(secondPage.unreadCount == 55)
+            for olderID in olderIDs { try await Announcement.find(olderID, on: app.db)?.delete(on: app.db) }
             try await Announcement.find(targetedID, on: app.db)?.delete(on: app.db)
             try await Announcement.find(preview.id, on: app.db)?.delete(on: app.db)
             try await Announcement.find(id, on: app.db)?.delete(on: app.db)

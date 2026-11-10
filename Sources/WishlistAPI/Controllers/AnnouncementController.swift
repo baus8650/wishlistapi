@@ -45,6 +45,19 @@ struct AnnouncementCard: Content {
     let createdAt: Date?
 }
 
+struct AnnouncementArchiveItem: Content {
+    let id: UUID
+    let title: String
+    let message: String
+    let createdAt: Date?
+    let readAt: Date?
+}
+struct AnnouncementArchivePage: Content {
+    let items: [AnnouncementArchiveItem]
+    let nextPage: Int?
+    let unreadCount: Int
+}
+
 struct AnnouncementPreference: Content { let enabled: Bool }
 struct AnnouncementSelection: Content { var userIDs: [UUID]? = nil }
 struct AnnouncementAudience: Content { let users: Int; let pushUsers: Int }
@@ -52,6 +65,8 @@ struct AnnouncementAudience: Content { let users: Int; let pushUsers: Int }
 struct AnnouncementController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         routes.get("announcements", use: cards)
+        routes.get("announcements", "history", use: archive)
+        routes.post("announcements", ":announcementID", "read", use: read)
         routes.post("announcements", ":announcementID", "dismiss", use: dismiss)
         routes.get("me", "announcement-preference", use: preference)
         routes.put("me", "announcement-preference", use: updatePreference)
@@ -60,6 +75,33 @@ struct AnnouncementController: RouteCollection {
         routes.post("admin", "announcements", "audience", use: selectedAudience)
         routes.post("admin", "announcements", "test", use: test)
         routes.post("admin", "announcements", use: send)
+    }
+    func archive(req: Request) async throws -> AnnouncementArchivePage {
+        let userID = try req.auth.require(User.self).requireID()
+        let page = min(max(req.query[Int.self, at: "page"] ?? 1, 1), 100000)
+        var deliveries = try await AnnouncementDelivery.query(on: req.db)
+            .filter(\.$user.$id == userID)
+            .join(Announcement.self, on: \AnnouncementDelivery.$announcement.$id == \Announcement.$id)
+            .sort(Announcement.self, \.$createdAt, .descending)
+            .sort(Announcement.self, \.$id, .descending)
+            .with(\.$announcement).range((page - 1) * 50..<(page - 1) * 50 + 51).all()
+        let hasMore = deliveries.count > 50
+        if hasMore { deliveries.removeLast() }
+        let unread = try await AnnouncementDelivery.query(on: req.db)
+            .filter(\.$user.$id == userID).filter(\.$readAt == nil).count()
+        return try .init(items: deliveries.map {
+            .init(id: try $0.announcement.requireID(), title: $0.announcement.title, message: $0.announcement.message,
+                  createdAt: $0.announcement.createdAt, readAt: $0.readAt)
+        }, nextPage: hasMore ? page + 1 : nil, unreadCount: unread)
+    }
+    func read(req: Request) async throws -> HTTPStatus {
+        let userID = try req.auth.require(User.self).requireID()
+        guard let id = req.parameters.get("announcementID", as: UUID.self),
+              let delivery = try await AnnouncementDelivery.query(on: req.db)
+                .filter(\.$user.$id == userID).filter(\.$announcement.$id == id).first() else { throw Abort(.notFound) }
+        delivery.readAt = delivery.readAt ?? Date()
+        try await delivery.save(on: req.db)
+        return .noContent
     }
     func cards(req: Request) async throws -> [AnnouncementCard] {
         let userID = try req.auth.require(User.self).requireID()
@@ -81,6 +123,7 @@ struct AnnouncementController: RouteCollection {
             throw Abort(.notFound)
         }
         delivery.dismissedAt = delivery.dismissedAt ?? Date()
+        delivery.readAt = delivery.readAt ?? Date()
         try await delivery.save(on: req.db)
         return .noContent
     }

@@ -21,6 +21,13 @@ struct ActivityUnreadCount: Content {
 }
 
 enum ActivityService {
+    static func unreadCount(userID: UUID, on db: any Database) async throws -> Int {
+        let activity = try await ActivityNotification.query(on: db).filter(\.$user.$id == userID)
+            .filter(\.$kind != "announcement").filter(\.$readAt == nil).count()
+        let announcements = try await AnnouncementDelivery.query(on: db).filter(\.$user.$id == userID)
+            .filter(\.$readAt == nil).count()
+        return activity + announcements
+    }
     static func actorName(for user: User, fallback: String = "Someone") -> String {
         let name = user.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return name.isEmpty ? fallback : name
@@ -67,15 +74,14 @@ struct ActivityController: RouteCollection {
 
     func list(req: Request) async throws -> [ActivityDTO] {
         let userID = try req.auth.require(User.self).requireID()
-        return try await ActivityNotification.query(on: req.db).filter(\.$user.$id == userID).sort(\.$createdAt, .descending).limit(100).all().map(dto)
+        let query = ActivityNotification.query(on: req.db).filter(\.$user.$id == userID)
+        if req.query[String.self, at: "category"] == "activity" { query.filter(\.$kind != "announcement") }
+        return try await query.sort(\.$createdAt, .descending).limit(100).all().map(dto)
     }
 
     func unreadCount(req: Request) async throws -> ActivityUnreadCount {
         let userID = try req.auth.require(User.self).requireID()
-        let count = try await ActivityNotification.query(on: req.db)
-            .filter(\.$user.$id == userID)
-            .filter(\.$readAt == nil)
-            .count()
+        let count = try await ActivityService.unreadCount(userID: userID, on: req.db)
         return .init(count: count)
     }
 
@@ -87,7 +93,9 @@ struct ActivityController: RouteCollection {
 
     func readAll(req: Request) async throws -> HTTPStatus {
         let userID = try req.auth.require(User.self).requireID()
-        for item in try await ActivityNotification.query(on: req.db).filter(\.$user.$id == userID).filter(\.$readAt == nil).all() { item.readAt = Date(); try await item.save(on: req.db) }
+        let query = ActivityNotification.query(on: req.db).filter(\.$user.$id == userID).filter(\.$readAt == nil)
+        if req.query[String.self, at: "category"] == "activity" { query.filter(\.$kind != "announcement") }
+        for item in try await query.all() { item.readAt = Date(); try await item.save(on: req.db) }
         return .noContent
     }
 
@@ -103,7 +111,9 @@ struct ActivityController: RouteCollection {
 
     func clearAll(req: Request) async throws -> HTTPStatus {
         let userID = try req.auth.require(User.self).requireID()
-        try await ActivityNotification.query(on: req.db).filter(\.$user.$id == userID).delete()
+        let query = ActivityNotification.query(on: req.db).filter(\.$user.$id == userID)
+        if req.query[String.self, at: "category"] == "activity" { query.filter(\.$kind != "announcement") }
+        try await query.delete()
         return .noContent
     }
 

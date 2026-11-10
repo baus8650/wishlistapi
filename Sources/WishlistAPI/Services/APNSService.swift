@@ -42,10 +42,7 @@ enum APNSService {
         guard !devices.isEmpty else { return }
 
         do {
-            let unreadCount = try await ActivityNotification.query(on: db)
-                .filter(\.$user.$id == userID)
-                .filter(\.$readAt == nil)
-                .count()
+            let unreadCount = try await ActivityService.unreadCount(userID: userID, on: db)
             let privateKey = try ES256PrivateKey(pem: rawKey.replacingOccurrences(of: "\\n", with: "\n"))
             let keys = JWTKeyCollection()
             await keys.add(ecdsa: privateKey, kid: JWKIdentifier(string: keyID))
